@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#f7f3ea">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Booth — a pocket photo booth</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <span class="wordmark">Booth</span>
+  <span class="masthead-meta">PWA · Nº 01</span>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ HOME ============ -->
+  <section id="view-home" class="view">
+    <p class="kicker">The pocket photo booth</p>
+    <h1>Shoot it <em>like it's 1975.</em></h1>
+    <p class="lede">Four frames, one strip, no account, no cloud. Your iPhone's own camera does the shooting — this app does the booth.</p>
+    <button id="btn-new" class="btn btn-primary">New session</button>
+
+    <div class="section-head">
+      <h2>Session gallery</h2>
+      <span id="gallery-count" class="count"></span>
+    </div>
+    <div id="gallery" class="gallery"></div>
+    <p id="gallery-empty" class="muted">No strips yet. Your finished strips live here, on this device only.</p>
+  </section>
+
+  <!-- ============ SETUP ============ -->
+  <section id="view-setup" class="view" hidden>
+    <p class="kicker">01 — Setup</p>
+    <h2>Set up the session</h2>
+
+    <label class="field">Event name
+      <input id="set-event" type="text" maxlength="48" placeholder="Maya's birthday" autocomplete="off">
+    </label>
+
+    <p class="field-label">Layout</p>
+    <div class="layout-grid" role="radiogroup" aria-label="Layout">
+      <button class="layout-opt" data-layout="strip4" role="radio" aria-checked="true">
+        <span class="diagram d-strip4"><i></i><i></i><i></i><i></i></span>
+        <span class="opt-name">Strip ×4</span><span class="opt-sub">The classic</span>
+      </button>
+      <button class="layout-opt" data-layout="strip3" role="radio" aria-checked="false">
+        <span class="diagram d-strip3"><i></i><i></i><i></i></span>
+        <span class="opt-name">Strip ×3</span><span class="opt-sub">Short &amp; sweet</span>
+      </button>
+      <button class="layout-opt" data-layout="grid" role="radio" aria-checked="false">
+        <span class="diagram d-grid"><i></i><i></i><i></i><i></i></span>
+        <span class="opt-name">Grid 2×2</span><span class="opt-sub">Four square</span>
+      </button>
+      <button class="layout-opt" data-layout="single" role="radio" aria-checked="false">
+        <span class="diagram d-single"><i></i></span>
+        <span class="opt-name">Single</span><span class="opt-sub">One portrait</span>
+      </button>
+    </div>
+
+    <p class="field-label">Camera</p>
+    <div class="segmented" role="radiogroup" aria-label="Camera">
+      <button data-camera="user" class="seg-opt selected" role="radio" aria-checked="true">Front</button>
+      <button data-camera="environment" class="seg-opt" role="radio" aria-checked="false">Rear</button>
+    </div>
+
+    <p class="field-label">Filter</p>
+    <div class="segmented filters" role="radiogroup" aria-label="Filter">
+      <button data-filter="natural" class="seg-opt selected" role="radio" aria-checked="true">Natural</button>
+      <button data-filter="noir" class="seg-opt" role="radio" aria-checked="false">Noir</button>
+      <button data-filter="sepia" class="seg-opt" role="radio" aria-checked="false">Sepia</button>
+      <button data-filter="warm" class="seg-opt" role="radio" aria-checked="false">Warm</button>
+    </div>
+
+    <label class="field">Caption <span class="opt-tag">optional</span>
+      <input id="set-caption" type="text" maxlength="60" placeholder="Best night ever" autocomplete="off">
+    </label>
+
+    <button id="btn-start" class="btn btn-primary">Start session</button>
+    <button id="btn-setup-back" class="btn btn-ghost">Back</button>
+  </section>
+
+  <!-- ============ CAPTURE ============ -->
+  <section id="view-capture" class="view" hidden>
+    <p class="kicker">02 — Capture</p>
+    <h2 id="cap-title">Shot 1 of 4</h2>
+    <div id="shot-dots" class="dots"></div>
+
+    <button id="btn-shutter" class="shutter" aria-label="Open camera">
+      <span class="shutter-ring"></span>
+      <span class="shutter-label">Open camera</span>
+    </button>
+    <p class="hint">Opens your iPhone's native camera. Take the shot, then you're brought right back.</p>
+
+    <div id="shot-thumbs" class="thumbs"></div>
+
+    <div class="row">
+      <button id="btn-to-review" class="btn btn-primary" disabled>Review strip</button>
+      <button id="btn-cap-back" class="btn btn-ghost">Back</button>
+    </div>
+    <input id="camera-input" class="file-input" type="file" accept="image/*" capture="user" aria-hidden="true" tabindex="-1">
+  </section>
+
+  <!-- ============ REVIEW ============ -->
+  <section id="view-review" class="view" hidden>
+    <p class="kicker">03 — Compose</p>
+    <h2>Review the strip</h2>
+    <div class="preview-frame">
+      <canvas id="preview"></canvas>
+    </div>
+
+    <p class="field-label">Filter</p>
+    <div class="segmented filters" id="rev-filters" role="radiogroup" aria-label="Filter">
+      <button data-filter="natural" class="seg-opt" role="radio">Natural</button>
+      <button data-filter="noir" class="seg-opt" role="radio">Noir</button>
+      <button data-filter="sepia" class="seg-opt" role="radio">Sepia</button>
+      <button data-filter="warm" class="seg-opt" role="radio">Warm</button>
+    </div>
+
+    <label class="field">Caption
+      <input id="rev-caption" type="text" maxlength="60" autocomplete="off">
+    </label>
+
+    <div class="row">
+      <button id="btn-finalize" class="btn btn-primary">Save strip</button>
+      <button id="btn-retake" class="btn btn-ghost">Retake shots</button>
+    </div>
+  </section>
+
+  <!-- ============ RESULT ============ -->
+  <section id="view-result" class="view" hidden>
+    <p class="kicker">04 — Done</p>
+    <h2>The strip</h2>
+    <div class="preview-frame">
+      <img id="result-img" alt="Finished photo booth strip">
+    </div>
+    <button id="btn-share" class="btn btn-primary">Share…</button>
+    <div class="row">
+      <button id="btn-download" class="btn btn-ghost">Download</button>
+      <button id="btn-again" class="btn btn-ghost">New session</button>
+    </div>
+    <p class="hint">Share opens the iOS share sheet — save to Photos, AirDrop it, send it anywhere.</p>
+  </section>
+
+</main>
+
+<footer class="colophon">
+  <span>Booth · a pocket photo booth</span>
+  <span>Photos never leave this device</span>
+</footer>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/store.js"></script>
+<script src="js/capture.js"></script>
+<script src="js/compose.js"></script>
+<script src="js/share.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

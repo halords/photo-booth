@@ -1,0 +1,19 @@
+{
+  "name": "Booth \u2014 a pocket photo booth",
+  "short_name": "Booth",
+  "description": "A pocket photo booth for iPhone \u2014 native camera capture, editorial photo strips, share anywhere.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f3ea",
+  "theme_color": "#f7f3ea",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
