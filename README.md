@@ -1,59 +1,66 @@
-# Booth — a pocket photo booth (PWA)
+# Booth — a pocket photo booth (Next.js)
 
-iPhone-first PWA photo booth. The **native iOS Camera app** does the shooting
-(via `capture` file input — the only camera path that works reliably inside an
-installed iPhone PWA); this app handles the booth: multi-shot sessions,
-editorial strip layouts, filters, captions, and sharing. No account, no cloud —
-photos never leave the device.
+A progressive web app that turns an iPhone into a photo booth. Built with
+**Next.js 15 + TypeScript + App Router**, deployed on Vercel from this repo —
+every push to `main` redeploys automatically.
 
-## Run it
+## Where things live
 
-No build step. Serve the folder over HTTPS (or `localhost`):
+| Path | What it does |
+|---|---|
+| `app/page.tsx` | Entry — wraps everything in `BoothProvider` |
+| `app/layout.tsx` | Fonts (Fraunces + Inter via `next/font`), metadata, viewport |
+| `app/globals.css` | All styling (anti-AI-slop editorial theme) |
+| `components/Shell.tsx` | Masthead, view router, footer, toast |
+| `components/HomeView.tsx` | Hero + session gallery |
+| `components/SetupView.tsx` | Event, layout, capture mode, lens, countdown, template, filter, caption |
+| `components/CaptureView.tsx` | Native shutter flow **and** pro viewfinder |
+| `components/ReviewView.tsx` | Live strip preview, template/filter/caption tweaks |
+| `components/ResultView.tsx` | Finished strip, share / download |
+| `components/pickers.tsx` | `Segmented` control + `FieldLabel` |
+| `components/ServiceWorker.tsx` | Registers `/sw.js` on load |
+| `lib/booth.tsx` | **The brain** — `BoothProvider` + `useBooth()` hook: view state machine, native capture, pro-camera countdown session, strip finalize, gallery |
+| `lib/compose.ts` | Canvas strip composer: layouts × templates (editorial / film / kraft), pixel filters |
+| `lib/procamera.ts` | getUserMedia viewfinder + frame capture |
+| `lib/capture.ts` | Native-camera file-input capture |
+| `lib/share.ts` | Web Share API + download fallback |
+| `lib/store.ts` | IndexedDB gallery (on-device only) |
+| `lib/types.ts` | Shared TypeScript types |
+| `public/` | `manifest.json`, `icon.svg`, `sw.js` (served statically) |
 
-```bash
-cd photo-booth
-python3 -m http.server 8080
-```
+## The usual revisions
 
-On iPhone: open the URL in Safari → Share → **Add to Home Screen**. Launch
-from the home-screen icon for the fullscreen standalone experience.
-
-> Camera access requires a secure context (HTTPS or localhost). `file://`
-> will not work.
+- **New strip template** → add a renderer in `lib/compose.ts`
+  (`RENDERERS` map + entry in `TEMPLATES`), it appears in setup + review
+  automatically.
+- **New layout** → add to `LAYOUTS` in `lib/compose.ts` and a card in
+  `components/SetupView.tsx` (`LAYOUT_META`).
+- **New filter** → one branch in `applyFilter` (`lib/compose.ts`) + one
+  option in the `Segmented` lists in setup/review.
+- **Capture flow changes** → `lib/booth.tsx` (`startPro` / `runProLoop` /
+  `shootNative`); UI in `components/CaptureView.tsx`.
 
 ## Flow
 
 1. **Home** — new session, gallery of finished strips (IndexedDB, on-device).
-2. **Setup** — event name, layout (Strip ×4 / ×3, Grid 2×2, Single),
-   capture mode (**Native app** or **Pro camera**), lens (front/rear),
-   countdown for pro mode (off / 3s / 5s / 10s), strip template
-   (**Editorial** / **Film** / **Kraft**), filter (Natural / Noir / Sepia / Warm),
-   optional caption.
-3. **Capture**
-   - *Native*: big shutter button opens the iPhone Camera app per shot;
-     thumbnails with per-shot retake. iOS requires the camera to open from a
-     direct tap, so there is deliberately no auto-fire countdown here.
-   - *Pro*: in-app viewfinder (rule-of-thirds grid, flip lens) with
-     configurable countdown auto-fire — continuous shooting until the strip
-     is complete. Cancel anytime; partial shots carry over to native mode.
-4. **Compose** — live canvas preview; switch template/filter and edit the
-   caption, re-renders instantly.
-5. **Done** — Share opens the iOS share sheet (Save to Photos, AirDrop,
-   Messages…); Download as fallback.
+2. **Setup** — event name, layout, capture mode (Native / Pro), lens,
+   countdown (pro only), template, filter, caption.
+3. **Capture** — native: shutter opens the iPhone Camera app per shot;
+   pro: in-app viewfinder with auto-fire countdown.
+4. **Compose** — live preview; switch template/filter/caption freely.
+5. **Done** — iOS share sheet, download fallback.
 
-## Design
+## Dev
 
-Follows the anti-AI-slop spec (`~/workspace/design/anti-ai-slop.md`): bone
-paper, charcoal ink, one vermilion accent, Fraunces serif + Inter, thin rules,
-numbered sections. The strips themselves are composed on canvas in the same
-language — hairline frame, tracked small caps, serif event name, date stamp.
+```bash
+npm install
+npm run dev
+```
 
-## Technical notes
+## Notes
 
-- Orientation: photos are decoded with `createImageBitmap(..., { imageOrientation: 'from-image' })`
-  so iPhone EXIF rotation is respected (fallback: plain `<img>`).
-- Filters are manual pixel ops (`noir`/`sepia`/`warm`) — `ctx.filter` is
-  unreliable on iOS Safari, so it's avoided.
-- Strips render at 640px wide, exported as JPEG q0.92.
-- Cancelling the native camera returns you to the capture view; nothing is lost.
-- Gallery persists in IndexedDB; event name persists in localStorage.
+- iOS Safari requires camera/file selection from a direct tap — the native
+  path is deliberately one-tap-per-shot. Auto-fire lives in pro mode.
+- Installed iOS PWAs can't use `getUserMedia` — pro mode falls back to
+  native automatically.
+- No backend. Photos never leave the device.
