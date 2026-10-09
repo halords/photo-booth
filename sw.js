@@ -9,6 +9,7 @@ const SHELL = [
   './js/app.js',
   './js/store.js',
   './js/capture.js',
+  './js/procamera.js',
   './js/compose.js',
   './js/share.js',
 ];

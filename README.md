@@ -24,12 +24,19 @@ from the home-screen icon for the fullscreen standalone experience.
 ## Flow
 
 1. **Home** — new session, gallery of finished strips (IndexedDB, on-device).
-2. **Setup** — event name, layout (Strip ×4 / ×3, Grid 2×2, Single), front/rear
-   camera, filter (Natural / Noir / Sepia / Warm), optional caption.
-3. **Capture** — big shutter button opens the native camera per shot; thumbnails
-   with per-shot retake. iOS requires the camera to open from a direct tap, so
-   there is deliberately no auto-fire countdown — the shutter tap *is* the beat.
-4. **Compose** — live canvas preview of the strip; switch filters and edit the
+2. **Setup** — event name, layout (Strip ×4 / ×3, Grid 2×2, Single),
+   capture mode (**Native app** or **Pro camera**), lens (front/rear),
+   countdown for pro mode (off / 3s / 5s / 10s), strip template
+   (**Editorial** / **Film** / **Kraft**), filter (Natural / Noir / Sepia / Warm),
+   optional caption.
+3. **Capture**
+   - *Native*: big shutter button opens the iPhone Camera app per shot;
+     thumbnails with per-shot retake. iOS requires the camera to open from a
+     direct tap, so there is deliberately no auto-fire countdown here.
+   - *Pro*: in-app viewfinder (rule-of-thirds grid, flip lens) with
+     configurable countdown auto-fire — continuous shooting until the strip
+     is complete. Cancel anytime; partial shots carry over to native mode.
+4. **Compose** — live canvas preview; switch template/filter and edit the
    caption, re-renders instantly.
 5. **Done** — Share opens the iOS share sheet (Save to Photos, AirDrop,
    Messages…); Download as fallback.
