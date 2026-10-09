@@ -3,6 +3,7 @@
 import { useBooth } from '@/lib/booth';
 import { Compose } from '@/lib/compose';
 import { FieldLabel, Segmented } from './pickers';
+import TemplateSwatch from './TemplateSwatch';
 import type { LayoutId } from '@/lib/types';
 
 const LAYOUT_META: { id: LayoutId; name: string; sub: string; diagram: string }[] = [
@@ -114,11 +115,7 @@ export default function SetupView() {
               className={`template-opt${settings.template === id ? ' selected' : ''}`}
               onClick={() => updateSettings({ template: id })}
             >
-              <span className={`swatch sw-${id}`} aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
+              <TemplateSwatch template={id} />
               <span className="opt-name">{Compose.TEMPLATES[id].name}</span>
               <span className="opt-sub">{Compose.TEMPLATES[id].sub}</span>
             </button>

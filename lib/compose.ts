@@ -431,4 +431,64 @@ export function shotsFor(layout: LayoutId): number {
   return (LAYOUTS[layout] ?? LAYOUTS.strip4).shots;
 }
 
-export const Compose = { loadPhoto, render, shotsFor, LAYOUTS, TEMPLATES };
+/* ---------------- swatch previews (true WYSIWYG) ---------------- */
+
+const swatchCache: Partial<Record<TemplateId, string>> = {};
+
+/** Neutral placeholder "photo" — deliberately abstract, so the template chrome is what reads. */
+function placeholderPhoto(seed: number): HTMLCanvasElement {
+  const S = 400;
+  const cv = document.createElement('canvas');
+  cv.width = S;
+  cv.height = S;
+  const ctx = cv.getContext('2d')!;
+  const tones = ['#9a938a', '#8a847c', '#a39c90', '#7e786f'];
+  ctx.fillStyle = tones[seed % tones.length];
+  ctx.fillRect(0, 0, S, S);
+  // simple portrait silhouette
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.arc(S / 2, S * 0.36, S * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(S / 2, S * 0.95, S * 0.34, S * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // soft top light
+  const g = ctx.createLinearGradient(0, 0, 0, S);
+  g.addColorStop(0, 'rgba(255,255,255,0.10)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  return cv;
+}
+
+/**
+ * A pixel-true miniature of a template: runs the real renderer with
+ * placeholder photos, then crops the top square (header + first frame).
+ * What the swatch shows is what the strip looks like.
+ */
+export function renderSwatch(template: TemplateId): string {
+  const hit = swatchCache[template];
+  if (hit) return hit;
+  const photos = [0, 1, 2, 3].map(placeholderPhoto);
+  const full = render({
+    photos,
+    layout: 'strip4',
+    template,
+    eventName: 'Sample event',
+    caption: 'Your caption here',
+    filter: 'natural',
+    stripNo: 1,
+    ts: Date.now(),
+  });
+  const side = 640;
+  const cv = document.createElement('canvas');
+  cv.width = side;
+  cv.height = side;
+  cv.getContext('2d')!.drawImage(full, 0, 0, side, side, 0, 0, side, side);
+  const url = cv.toDataURL('image/jpeg', 0.85);
+  swatchCache[template] = url;
+  return url;
+}
+
+export const Compose = { loadPhoto, render, shotsFor, renderSwatch, LAYOUTS, TEMPLATES };

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useBooth } from '@/lib/booth';
 import { Compose } from '@/lib/compose';
 import { FieldLabel, Segmented } from './pickers';
+import TemplateSwatch from './TemplateSwatch';
 
 export default function ReviewView() {
   const { settings, updateSettings, getStripCanvas, finalize, go } = useBooth();
@@ -38,11 +39,7 @@ export default function ReviewView() {
               className={`template-opt${settings.template === id ? ' selected' : ''}`}
               onClick={() => updateSettings({ template: id })}
             >
-              <span className={`swatch sw-${id}`} aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
+              <TemplateSwatch template={id} />
               <span className="opt-name">{Compose.TEMPLATES[id].name}</span>
             </button>
           )

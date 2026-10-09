@@ -76,6 +76,8 @@ h2 {
 .sw-editorial { background: #f7f3ea; } .sw-editorial i { background: #4a453d; }
 .sw-film { background: #16130f; } .sw-film i { background: #efe8d8; }
 .sw-kraft { background: #c9a26b; } .sw-kraft i { background: #2b2119; }
+.swatch-live { padding: 0; overflow: hidden; }
+.swatch-live img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
 
 /* ---------- pro viewfinder ---------- */
 .viewfinder {
