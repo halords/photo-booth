@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Fraunces, Inter } from 'next/font/google';
+import { Fraunces, Space_Grotesk } from 'next/font/google';
 import ServiceWorker from '@/components/ServiceWorker';
 import './globals.css';
 
@@ -9,7 +9,7 @@ const fraunces = Fraunces({
   display: 'swap',
 });
 
-const inter = Inter({
+const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
   variable: '--font-sans',
   display: 'swap',
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#f7f3ea',
+  themeColor: '#F4F1EA',
   viewportFit: 'cover',
   width: 'device-width',
   initialScale: 1,
@@ -42,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${inter.variable}`}>
+    <html lang="en" className={`${fraunces.variable} ${spaceGrotesk.variable}`}>
       <body>
         <ServiceWorker />
         {children}

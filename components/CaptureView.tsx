@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBooth } from '@/lib/booth';
 import { Compose } from '@/lib/compose';
 
@@ -97,20 +97,21 @@ function NativeCapture() {
 }
 
 function ThumbImg({ file }: { file: File }) {
-  const url = URL.createObjectURL(file);
-  // Revoke on unmount is skipped for brevity; object URLs are short-lived here.
-  return <img src={url} alt="" />;
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url ? <img src={url} alt="" /> : null;
 }
 
 function ProCapture() {
   const { settings, shots, pro, startPro, flipLens, cancelPro, go } = useBooth();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const startedRef = useRef(false);
   const n = Compose.shotsFor(settings.layout);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
     const video = videoRef.current;
     if (video) startPro(video);
     return () => {

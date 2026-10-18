@@ -46,7 +46,7 @@ interface BoothValue {
   startPro: (video: HTMLVideoElement) => void;
   flipLens: (video: HTMLVideoElement) => void;
   cancelPro: () => void;
-  getStripCanvas: () => HTMLCanvasElement;
+  getStripCanvas: () => Promise<HTMLCanvasElement>;
   finalize: () => Promise<void>;
   openRecord: (rec: StripRecord) => void;
   share: () => Promise<void>;
@@ -87,7 +87,11 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     caption: '',
   }));
   const [shots, setShots] = useState<(Shot | null)[]>([]);
-  const [stripNo, setStripNo] = useState(1);
+  const [stripNo, setStripNo] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    const n = Number(localStorage.getItem('booth.stripNo'));
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+  });
   const [gallery, setGallery] = useState<StripRecord[]>([]);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [pro, setPro] = useState<ProStatus>({
@@ -311,7 +315,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- review / result ---------------- */
 
-  const getStripCanvas = useCallback((): HTMLCanvasElement => {
+  const getStripCanvas = useCallback(async (): Promise<HTMLCanvasElement> => {
     const photos = shots.map((s) => s!.img);
     return Compose.render({
       photos,
@@ -326,23 +330,47 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
   }, [shots, settings, stripNo]);
 
   const finalize = useCallback(async () => {
-    const canvas = getStripCanvas();
+    const canvas = await getStripCanvas();
     const name = `${slug(settings.eventName)}-strip-${String(stripNo).padStart(3, '0')}.jpg`;
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const record = {
+      id: 'strip-' + Date.now(),
+      ts: Date.now(),
+      dataUrl,
+      eventName: settings.eventName,
+      layout: settings.layout,
+    };
     try {
-      await putStrip({
-        id: 'strip-' + Date.now(),
-        ts: Date.now(),
-        dataUrl,
-        eventName: settings.eventName,
-        layout: settings.layout,
-      });
-    } catch {
-      notify('Saved, but the gallery is full on this device.');
+      await putStrip(record);
+    } catch (err: unknown) {
+      // Gallery full: evict the oldest strip once, then retry.
+      if (err instanceof Error && err.name === 'QuotaExceededError') {
+        try {
+          const strips = await allStrips();
+          const oldest = strips[strips.length - 1];
+          if (oldest) {
+            await deleteStrip(oldest.id);
+            await putStrip(record);
+            notify('Gallery was full — oldest strip removed to make room.');
+          } else {
+            notify('Saved, but the gallery is full on this device.');
+          }
+        } catch {
+          notify('Saved, but the gallery is full on this device.');
+        }
+      } else {
+        notify('Could not save to the gallery on this device.');
+      }
     }
     setStripCanvas(canvas);
     setResult({ dataUrl, name });
-    setStripNo((n) => n + 1);
+    const nextNo = stripNo + 1;
+    setStripNo(nextNo);
+    try {
+      localStorage.setItem('booth.stripNo', String(nextNo));
+    } catch {
+      /* ignore */
+    }
     go('result');
     void refreshGallery();
   }, [getStripCanvas, settings.eventName, settings.layout, stripNo, notify, refreshGallery, go]);

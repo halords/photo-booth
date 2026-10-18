@@ -8,7 +8,13 @@ import type { TemplateId } from '@/lib/types';
 export default function TemplateSwatch({ template }: { template: TemplateId }) {
   const [url, setUrl] = useState<string>('');
   useEffect(() => {
-    setUrl(renderSwatch(template));
+    let cancelled = false;
+    void renderSwatch(template).then((u) => {
+      if (!cancelled) setUrl(u);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [template]);
   return (
     <span className="swatch swatch-live" aria-hidden="true">

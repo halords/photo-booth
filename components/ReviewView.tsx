@@ -11,13 +11,20 @@ export default function ReviewView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const cv = getStripCanvas();
-    const holder = canvasRef.current;
-    if (!holder) return;
-    holder.width = cv.width;
-    holder.height = cv.height;
-    holder.getContext('2d')!.drawImage(cv, 0, 0);
-  });
+    let cancelled = false;
+    void (async () => {
+      const cv = await getStripCanvas();
+      if (cancelled) return;
+      const holder = canvasRef.current;
+      if (!holder) return;
+      holder.width = cv.width;
+      holder.height = cv.height;
+      holder.getContext('2d')!.drawImage(cv, 0, 0);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getStripCanvas]);
 
   return (
     <section className="view">

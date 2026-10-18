@@ -22,7 +22,9 @@ const W = 640;
 const PAD = 44;
 const GUTTER = 26;
 const SERIF = 'Georgia, "Times New Roman", serif';
-const SANS = 'Inter, system-ui, sans-serif';
+/* Canvas text uses the project's real webfonts (loaded via next/font in
+   layout.tsx); the §2.2 fallback stack applies if a load fails. */
+const SANS = '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
 
 const LAYOUTS: Record<LayoutId, { shots: number; cols: number; rows: number }> = {
   strip4: { shots: 4, cols: 1, rows: 4 },
@@ -206,10 +208,10 @@ function drawPhotos(
 /* ---------------- template: editorial ---------------- */
 
 function renderEditorial(o: Required<RenderOpts>): HTMLCanvasElement {
-  const INK = '#1c1a17';
-  const BONE = '#f7f3ea';
-  const ACCENT = '#d9381e';
-  const MUTED = '#8a847a';
+  const INK = '#1B1A17';
+  const BONE = '#F4F1EA';
+  const ACCENT = '#D9381E';
+  const MUTED = '#6E675C';
   const { rows, cellH } = cells(o.layout);
   const headerH = 118;
   const footerH = 128;
@@ -291,8 +293,8 @@ function sprocketBand(
 }
 
 function renderFilm(o: Required<RenderOpts>): HTMLCanvasElement {
-  const PAPER = '#efe8d8';
-  const BASE = '#16130f';
+  const PAPER = '#EAE4D6';
+  const BASE = '#1B1A17';
   const { rows, cellH } = cells(o.layout);
   const bandH = 56;
   const labelH = 46;
@@ -357,9 +359,11 @@ function renderFilm(o: Required<RenderOpts>): HTMLCanvasElement {
 /* ---------------- template: kraft ---------------- */
 
 function renderKraft(o: Required<RenderOpts>): HTMLCanvasElement {
-  const INK = '#2b2119';
-  const PAPER = '#c9a26b';
-  const DEEP = '#b78f57';
+  /* Product-content colors (the kraft paper itself) — exempt per spec §9.
+     Ink stays on-token charcoal so strip text matches the site. */
+  const INK = '#1B1A17';
+  const PAPER = '#c9a26b'; // design-lint-exempt: kraft paper, product content
+  const DEEP = '#b78f57'; // design-lint-exempt: kraft paper shade, product content
   const { rows, cellH } = cells(o.layout);
   const headerH = 138;
   const footerH = 118;
@@ -422,7 +426,13 @@ const RENDERERS: Record<TemplateId, (o: Required<RenderOpts>) => HTMLCanvasEleme
   kraft: renderKraft,
 };
 
-export function render(o: RenderOpts): HTMLCanvasElement {
+export async function render(o: RenderOpts): Promise<HTMLCanvasElement> {
+  // Wait for webfonts so canvas text uses Space Grotesk/Fraunces, not fallbacks.
+  try {
+    await document.fonts.ready;
+  } catch {
+    /* fonts API unavailable — fallbacks still render */
+  }
   const fn = RENDERERS[o.template] ?? renderEditorial;
   return fn({ ...o, ts: o.ts ?? Date.now() });
 }
@@ -467,11 +477,11 @@ function placeholderPhoto(seed: number): HTMLCanvasElement {
  * placeholder photos, then crops the top square (header + first frame).
  * What the swatch shows is what the strip looks like.
  */
-export function renderSwatch(template: TemplateId): string {
+export async function renderSwatch(template: TemplateId): Promise<string> {
   const hit = swatchCache[template];
   if (hit) return hit;
   const photos = [0, 1, 2, 3].map(placeholderPhoto);
-  const full = render({
+  const full = await render({
     photos,
     layout: 'strip4',
     template,
