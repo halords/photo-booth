@@ -198,7 +198,15 @@ function drawPhotos(
       const x = PAD + c * (cellW + GUTTER);
       const y = frame.top + r * (cellH + GUTTER);
       frame.border(ctx, x, y, cellW, cellH);
+      // Clip to the cell: drawCover overflows (cover semantics), so without
+      // this the photo spills into gutters/neighbours and the filter below
+      // — applied to the cell rect only — lands on just part of the photo.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, cellW, cellH);
+      ctx.clip();
       drawCover(ctx, photos[i], x, y, cellW, cellH);
+      ctx.restore();
       applyFilter(ctx, x, y, cellW, cellH, filter);
       frame.annotate?.(ctx, x, y, cellW, cellH, i);
     }
