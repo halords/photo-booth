@@ -1,83 +1,31 @@
 import type { Lens } from './types';
-
-/**
- * Pro Camera — in-app viewfinder via getUserMedia. Frames are grabbed
- * programmatically, so countdown auto-fire needs no per-shot tap gesture.
- * Unavailable in installed iOS PWAs — callers must fall back to native mode.
- */
 let stream: MediaStream | null = null;
 let videoEl: HTMLVideoElement | null = null;
-
-export function supported(): boolean {
-  return !!(
-    typeof navigator !== 'undefined' &&
-    navigator.mediaDevices &&
-    navigator.mediaDevices.getUserMedia
-  );
+let generation = 0;
+export function supported() { return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia; }
+export async function start(facingMode: Lens, video: HTMLVideoElement, deviceId?: string, mirror = true) {
+  stop(); const request = generation;
+  const opened = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
+    ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: facingMode } }),
+    width: { ideal: 1920 }, height: { ideal: 1080 },
+  } });
+  if (request !== generation) { opened.getTracks().forEach(t => t.stop()); throw new DOMException('Camera request cancelled', 'AbortError'); }
+  stream = opened; videoEl = video; video.srcObject = opened; video.muted = true; video.playsInline = true;
+  video.classList.toggle('mirrored', mirror && facingMode === 'user');
+  try { await video.play(); } catch (error) { if (request === generation) stop(); throw error; }
+  if (request !== generation) throw new DOMException('Camera request cancelled', 'AbortError');
 }
-
-export async function start(
-  facingMode: Lens,
-  videoElement: HTMLVideoElement
-): Promise<void> {
-  stop();
-  videoEl = videoElement;
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-    },
-  });
-  videoEl.srcObject = stream;
-  videoEl.muted = true;
-  videoEl.playsInline = true;
-  videoEl.classList.toggle('mirrored', facingMode === 'user');
-  await videoEl.play();
+export function stop() {
+  generation++; stream?.getTracks().forEach(t => t.stop()); stream = null;
+  if (videoEl) videoEl.srcObject = null; videoEl = null;
 }
-
-export function stop(): void {
-  if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-  }
-  if (videoEl) {
-    videoEl.srcObject = null;
-    videoEl = null;
-  }
+export function capture(mirrored: boolean) {
+  if (!videoEl?.videoWidth || videoEl.readyState < 2) throw new Error('The camera is still warming up. Try again in a moment.');
+  const w = videoEl.videoWidth, h = videoEl.videoHeight;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d')!;
+  if (mirrored) { ctx.translate(w, 0); ctx.scale(-1, 1); } ctx.drawImage(videoEl, 0, 0, w, h); return cv;
 }
-
-/** Grab the current frame as a square canvas (center crop). */
-export function capture(mirrored: boolean): HTMLCanvasElement {
-  if (!videoEl || !videoEl.videoWidth) throw new Error('Camera not ready.');
-  const vw = videoEl.videoWidth;
-  const vh = videoEl.videoHeight;
-  const s = Math.min(vw, vh);
-  const sx = (vw - s) / 2;
-  const sy = (vh - s) / 2;
-  const cv = document.createElement('canvas');
-  cv.width = s;
-  cv.height = s;
-  const ctx = cv.getContext('2d')!;
-  if (mirrored) {
-    ctx.translate(s, 0);
-    ctx.scale(-1, 1);
-  }
-  ctx.drawImage(videoEl, sx, sy, s, s, 0, 0, s, s);
-  return cv;
+export function canvasToFile(canvas: HTMLCanvasElement, name: string) {
+  return new Promise<File>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(new File([blob], name, { type: 'image/jpeg' })) : reject(new Error('Could not encode the photo.')), 'image/jpeg', 0.94));
 }
-
-export function canvasToFile(
-  canvas: HTMLCanvasElement,
-  name: string
-): Promise<File> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) return reject(new Error('Could not encode frame.'));
-      resolve(new File([blob], name, { type: 'image/jpeg' }));
-    }, 'image/jpeg', 0.95);
-  });
-}
-
 export const ProCamera = { supported, start, stop, capture, canvasToFile };

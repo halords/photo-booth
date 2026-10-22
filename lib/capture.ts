@@ -12,10 +12,13 @@ export function takePhoto(input: HTMLInputElement, camera: Lens): Promise<File> 
     input.value = '';
 
     let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
     const done = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       input.removeEventListener('change', onChange);
+      input.removeEventListener('cancel', onCancel);
       window.removeEventListener('focus', onFocus);
       fn();
     };
@@ -24,6 +27,7 @@ export function takePhoto(input: HTMLInputElement, camera: Lens): Promise<File> 
       if (f) done(() => resolve(f));
       else done(() => reject(new Error('No file chosen.')));
     };
+    const onCancel = () => done(() => reject(new Error('cancelled')));
     // iOS fires focus when returning from the camera without a shot.
     const onFocus = () => {
       setTimeout(() => {
@@ -32,9 +36,10 @@ export function takePhoto(input: HTMLInputElement, camera: Lens): Promise<File> 
       }, 700);
     };
     input.addEventListener('change', onChange);
+    input.addEventListener('cancel', onCancel);
     window.addEventListener('focus', onFocus);
     input.click();
-    setTimeout(
+    timer = setTimeout(
       () => done(() => reject(new Error('Timed out waiting for the camera.'))),
       120000
     );

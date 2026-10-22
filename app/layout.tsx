@@ -1,39 +1,27 @@
 import type { Metadata, Viewport } from 'next';
-import { Fraunces, Space_Grotesk } from 'next/font/google';
-import ServiceWorker from '@/components/ServiceWorker';
 import './globals.css';
 
-const fraunces = Fraunces({
-  subsets: ['latin'],
-  variable: '--font-serif',
-  display: 'swap',
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  variable: '--font-sans',
-  display: 'swap',
-});
-
 export const metadata: Metadata = {
-  title: 'Booth — a pocket photo booth',
-  description:
-    'A pocket photo booth for iPhone — native camera capture, editorial photo strips, share anywhere.',
+  title: 'Pocket. — Your personal photo booth',
+  description: 'Capture, personalize, and keep your favorite moments. Your own photo booth, with beautiful strips, filters, and a private gallery.',
   manifest: '/manifest.json',
+  icons: { icon: '/icon.svg', apple: '/icon-192.png' },
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
-    title: 'Booth',
+    statusBarStyle: 'black-translucent',
+    title: 'Pocket',
+  },
+  openGraph: {
+    title: 'Pocket Photo Booth',
+    description: 'Your personal photo booth, with custom 4R event prints and a private gallery.',
+    type: 'website',
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#F4F1EA',
-  viewportFit: 'cover',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  themeColor: '#f7f6f2',
 };
 
 export default function RootLayout({
@@ -42,11 +30,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${spaceGrotesk.variable}`}>
-      <body>
-        <ServiceWorker />
-        {children}
-      </body>
+    <html lang="en">
+      <body>{children}</body>
     </html>
   );
 }

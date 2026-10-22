@@ -1,447 +1,324 @@
 'use client';
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
-import type {
-  Lens,
-  Settings,
-  Shot,
-  StripRecord,
-  ViewName,
-} from './types';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { CameraDevice, Lens, Settings, Shot, StripRecord, ViewName } from './types';
 import { takePhoto } from './capture';
 import { ProCamera } from './procamera';
 import { Compose } from './compose';
-import { Share } from './share';
+import { Share, type ImageFormat } from './share';
 import { allStrips, deleteStrip, putStrip } from './store';
+import { DEFAULT_4R, sanitize4R } from './layouts';
 
-export interface ProStatus {
-  running: boolean;
-  label: string;
-  count: number | null;
-  status: string;
-}
-
+interface ProStatus { running: boolean; count: number | null; status: string; cameraReady: boolean; error: string | null; flash: boolean }
+interface Result { dataUrl: string; name: string; id: string; saved: boolean; width: number; height: number; editable: boolean; printOrientation?: 'portrait' | 'landscape' }
 interface BoothValue {
-  view: ViewName;
-  settings: Settings;
-  shots: (Shot | null)[];
-  stripNo: number;
-  gallery: StripRecord[];
-  toastMsg: string | null;
-  pro: ProStatus;
-  result: { dataUrl: string; name: string } | null;
-  updateSettings: (patch: Partial<Settings>) => void;
-  go: (v: ViewName) => void;
-  notify: (msg: string) => void;
-  refreshGallery: () => Promise<void>;
-  startSession: () => void;
-  shootNative: (input: HTMLInputElement, index: number) => Promise<void>;
-  startPro: (video: HTMLVideoElement) => void;
-  flipLens: (video: HTMLVideoElement) => void;
-  cancelPro: () => void;
-  getStripCanvas: () => Promise<HTMLCanvasElement>;
-  finalize: () => Promise<void>;
-  openRecord: (rec: StripRecord) => void;
-  share: () => Promise<void>;
-  download: () => Promise<void>;
-  removeRecord: (id: string) => Promise<void>;
+  view: ViewName; settings: Settings; shots: (Shot | null)[]; stripNo: number; gallery: StripRecord[];
+  galleryLoading: boolean; toastMsg: string | null; pro: ProStatus; result: Result | null; busy: boolean;
+  cameras: CameraDevice[]; selectedCamera: CameraDevice | null;
+  updateSettings: (patch: Partial<Settings>) => void; go: (view: ViewName) => void; notify: (msg: string) => void;
+  refreshGallery: () => Promise<void>; startSession: () => void; shootNative: (input: HTMLInputElement, index: number) => Promise<void>;
+  importPhotos: (files: File[], index?: number) => Promise<void>; useDemo: () => Promise<void>;
+  startPro: (video: HTMLVideoElement, lens?: Lens) => Promise<void>; flipLens: (video: HTMLVideoElement) => void;
+  cancelPro: () => void; stopSequence: () => void; captureSequence: (single?: boolean) => Promise<void>;
+  getStripCanvas: (preview?: boolean) => Promise<HTMLCanvasElement>; finalize: () => Promise<void>;
+  openRecord: (rec: StripRecord) => void; share: () => Promise<void>; download: (format?: ImageFormat) => Promise<void>;
+  removeRecord: (id: string) => Promise<void>; toggleFavorite: (id: string) => Promise<void>;
+  detectCameras: () => Promise<void>; selectCamera: (camera: CameraDevice | null) => void;
+  retakeShot: (index: number) => void; moveShot: (index: number, direction: -1 | 1) => void;
+  editShot: (index: number, patch: Partial<NonNullable<Shot['edit']>>) => void;
 }
-
-const BoothContext = createContext<BoothValue | null>(null);
-
-export function useBooth(): BoothValue {
-  const v = useContext(BoothContext);
-  if (!v) throw new Error('useBooth must be used inside BoothProvider');
-  return v;
+const Context = createContext<BoothValue | null>(null);
+export function useBooth() { const value = useContext(Context); if (!value) throw new Error('Missing BoothProvider'); return value; }
+const defaults: Settings = {
+  customLayout: DEFAULT_4R,
+  eventName: '', layout: 'strip4', mode: 'pro', camera: 'user', cameraSource: 'webcam', countdown: 3,
+  filter: 'natural', template: 'polaroid-white', caption: '', stripSize: 'standard', printDPI: 300,
+  soundEnabled: true, flashEnabled: true, countdownSound: true, mirrorMode: true, quality: 'high',
+  showGrid: false, greenScreenEnabled: false, greenScreenColor: '#00ff00', backgroundImage: null,
+  frameColor: '', showDate: true,
+};
+const emptyPro: ProStatus = { running: false, count: null, status: 'Starting camera…', cameraReady: false, error: null, flash: false };
+const defaultEdit = { zoom: 1, x: 0, y: 0, rotation: 0, mirror: false };
+const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pocket';
+const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+const requiredPhotos = (s: Settings) => s.layout === 'custom4r' ? s.customLayout.slots.length : Compose.shotsFor(s.layout);
+function closeShot(shot: Shot | null) { if (shot?.img && 'close' in shot.img) shot.img.close(); }
+async function makeShot(file: File): Promise<Shot> {
+  if (!file.type.startsWith('image/') && !/\.(heic|heif|jpg|jpeg|png|webp|avif)$/i.test(file.name)) throw new Error('Choose an image file, such as JPG, PNG, or HEIC.');
+  if (file.size > 40 * 1024 * 1024) throw new Error('Choose a photo smaller than 40 MB.');
+  let img = await Compose.loadPhoto(file);
+  const width = 'naturalWidth' in img ? img.naturalWidth : img.width, height = 'naturalHeight' in img ? img.naturalHeight : img.height;
+  if (Math.max(width, height) > 2400) {
+    const cv = document.createElement('canvas'), scale = 2400 / Math.max(width, height);
+    cv.width = Math.round(width * scale); cv.height = Math.round(height * scale); cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+    if ('close' in img) img.close();
+    file = await ProCamera.canvasToFile(cv, file.name.replace(/\.[^.]+$/, '') + '.jpg'); img = await Compose.loadPhoto(file);
+  }
+  return { file, img, timestamp: Date.now(), cameraSource: 'webcam', edit: { ...defaultEdit } };
 }
-
-function slug(name: string): string {
-  return (
-    (name || 'booth')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'booth'
-  );
-}
-
 export function BoothProvider({ children }: { children: React.ReactNode }) {
-  const [view, setView] = useState<ViewName>('home');
-  const [settings, setSettings] = useState<Settings>(() => ({
-    eventName:
-      typeof window !== 'undefined'
-        ? localStorage.getItem('booth.eventName') || ''
-        : '',
-    layout: 'strip4',
-    mode: 'native',
-    camera: 'user',
-    countdown: 3,
-    filter: 'natural',
-    template: 'editorial',
-    caption: '',
-  }));
-  const [shots, setShots] = useState<(Shot | null)[]>([]);
-  const [stripNo, setStripNo] = useState(() => {
-    if (typeof window === 'undefined') return 1;
-    const n = Number(localStorage.getItem('booth.stripNo'));
-    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
-  });
-  const [gallery, setGallery] = useState<StripRecord[]>([]);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [pro, setPro] = useState<ProStatus>({
-    running: false,
-    label: '',
-    count: null,
-    status: '',
-  });
-  const [result, setResult] = useState<{ dataUrl: string; name: string } | null>(
-    null
-  );
-  const [stripCanvas, setStripCanvas] = useState<HTMLCanvasElement | null>(null);
-
-  const cancelledRef = useRef(false);
-  const toastTimer = useRef<number | null>(null);
-  const audioRef = useRef<AudioContext | null>(null);
-
-  const notify = useCallback((msg: string) => {
-    setToastMsg(msg);
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastMsg(null), 2800);
+  const [view, setView] = useState<ViewName>('home'), [settings, setSettings] = useState<Settings>(defaults);
+  const [shots, setShots] = useState<(Shot | null)[]>([]), [stripNo, setStripNo] = useState(1);
+  const [gallery, setGallery] = useState<StripRecord[]>([]), [galleryLoading, setGalleryLoading] = useState(true);
+  const [toastMsg, setToastMsg] = useState<string | null>(null), [pro, setPro] = useState<ProStatus>(emptyPro);
+  const [result, setResult] = useState<Result | null>(null), [busy, setBusy] = useState(false);
+  const [cameras, setCameras] = useState<CameraDevice[]>([]), [selectedCamera, setSelectedCamera] = useState<CameraDevice | null>(null);
+  const settingsRef = useRef(settings), shotsRef = useRef(shots), cameraRef = useRef(selectedCamera);
+  const sequence = useRef(0), session = useRef(0), running = useRef(false), busyRef = useRef(false);
+  const cameraRequest = useRef(0);
+  const nativePending = useRef(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null), flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resultCanvas = useRef<HTMLCanvasElement | null>(null), audio = useRef<AudioContext | null>(null);
+  const sessionTime = useRef(Date.now());
+  const viewRef = useRef(view); viewRef.current = view;
+  settingsRef.current = settings; cameraRef.current = selectedCamera;
+  const replaceShots = useCallback((next: (Shot | null)[]) => { shotsRef.current = next; setShots(next); }, []);
+  const notify = useCallback((message: string) => {
+    setToastMsg(message); if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 4500);
   }, []);
-
-  const go = useCallback((v: ViewName) => {
-    setView(v);
-    window.scrollTo(0, 0);
+  const stopSequence = useCallback(() => {
+    sequence.current++; running.current = false;
+    setPro(p => ({ ...p, running: false, count: null, flash: false, status: p.cameraReady ? 'Ready when you are' : p.status }));
   }, []);
-
+  const cancelPro = useCallback(() => { cameraRequest.current++; stopSequence(); ProCamera.stop(); setPro(p => ({ ...p, cameraReady: false, status: 'Camera paused' })); }, [stopSequence]);
+  const go = useCallback((next: ViewName) => {
+    stopSequence(); if (next !== 'capture') ProCamera.stop();
+    if (next !== viewRef.current) session.current++;
+    viewRef.current = next;
+    setView(next); window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [stopSequence]);
   const updateSettings = useCallback((patch: Partial<Settings>) => {
-    setSettings((s) => ({ ...s, ...patch }));
+    const next = { ...settingsRef.current, ...patch }; settingsRef.current = next; setSettings(next);
+    try { localStorage.setItem('booth.settings', JSON.stringify(next)); }
+    catch {
+      // Large artwork stays available for this session even if preferences quota is small.
+      try { localStorage.setItem('booth.settings', JSON.stringify({ ...next, customLayout: { ...next.customLayout, backgroundDataUrl: null } })); } catch {}
+    }
   }, []);
-
   const refreshGallery = useCallback(async () => {
+    try { setGallery(await allStrips()); } catch { notify('Device storage is unavailable. You can still download your strips.'); }
+    finally { setGalleryLoading(false); }
+  }, [notify]);
+  const detectCameras = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
-      setGallery(await allStrips());
-    } catch {
-      /* gallery unavailable */
-    }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setCameras(devices.filter(d => d.kind === 'videoinput').map((d, index) => ({
+        id: d.deviceId, label: d.label || 'Camera ' + (index + 1), source: 'webcam', type: 'webcam', connected: true,
+        capabilities: { maxResolution: { width: 1920, height: 1080 }, minResolution: { width: 640, height: 480 }, supportsHD: true, supports4K: false, supportsRAW: false, supportsFlash: false, supportsManual: false },
+      })));
+    } catch {}
   }, []);
-
   useEffect(() => {
-    refreshGallery();
-  }, [refreshGallery]);
-
-  /* ---------------- session ---------------- */
-
-  const startSession = useCallback(() => {
-    const n = Compose.shotsFor(settings.layout);
-    setShots(new Array(n).fill(null));
-    cancelledRef.current = false;
     try {
-      localStorage.setItem('booth.eventName', settings.eventName);
-    } catch {
-      /* ignore */
-    }
-    go('capture');
-  }, [settings.layout, settings.eventName, go]);
-
-  /* ---------------- native capture ---------------- */
-
-  const shootNative = useCallback(
-    async (input: HTMLInputElement, index: number) => {
-      try {
-        const file = await takePhoto(input, settings.camera);
-        const img = await Compose.loadPhoto(file);
-        setShots((prev) => {
-          const next = [...prev];
-          next[index] = { file, img };
-          return next;
-        });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Camera failed.';
-        if (msg !== 'cancelled') notify(msg);
-      }
-    },
-    [settings.camera, notify]
-  );
-
-  /* ---------------- pro capture ---------------- */
-
-  const beep = useCallback((freq: number, dur: number) => {
-    try {
-      const AC =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext })
-          .webkitAudioContext;
-      if (!AC) return;
-      audioRef.current = audioRef.current || new AC();
-      const ctx = audioRef.current;
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.frequency.value = freq;
-      o.type = 'sine';
-      g.gain.setValueAtTime(0.18, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime + dur);
-    } catch {
-      /* audio unavailable — countdown still works */
-    }
-  }, []);
-
-  const runCountdown = useCallback(
-    (sec: number): Promise<void> =>
-      new Promise((resolve) => {
-        if (!sec || sec <= 0) return resolve();
-        let left = sec;
-        setPro((p) => ({ ...p, count: left }));
-        beep(520, 0.12);
-        const timer = window.setInterval(() => {
-          if (cancelledRef.current) {
-            window.clearInterval(timer);
-            setPro((p) => ({ ...p, count: null }));
-            return resolve();
-          }
-          left -= 1;
-          if (left <= 0) {
-            window.clearInterval(timer);
-            setPro((p) => ({ ...p, count: null }));
-            beep(880, 0.22);
-            return resolve();
-          }
-          setPro((p) => ({ ...p, count: left }));
-          beep(520, 0.12);
-        }, 1000);
-      }),
-    [beep]
-  );
-
-  const runProLoop = useCallback(
-    async (video: HTMLVideoElement, camera: Lens) => {
-      const n = Compose.shotsFor(settings.layout);
-      const countdownSec = settings.countdown;
-      cancelledRef.current = false;
-      setPro({
-        running: true,
-        label: `Shot 1 of ${n}`,
-        count: null,
-        status: 'Get ready…',
-      });
-      try {
-        await ProCamera.start(camera, video);
-      } catch {
-        ProCamera.stop();
-        notify('Could not open the camera. Check permission, or use native mode.');
-        setSettings((s) => ({ ...s, mode: 'native' }));
-        setPro((p) => ({ ...p, running: false }));
-        return;
-      }
-      for (let i = 0; i < n; i++) {
-        if (cancelledRef.current) break;
-        setPro((p) => ({
-          ...p,
-          label: `Shot ${i + 1} of ${n}`,
-          status: 'Get ready…',
-        }));
-        await runCountdown(countdownSec);
-        if (cancelledRef.current) break;
-        try {
-          const frame = ProCamera.capture(camera === 'user');
-          const file = await ProCamera.canvasToFile(frame, `shot-${i + 1}.jpg`);
-          const img = await Compose.loadPhoto(file);
-          setShots((prev) => {
-            const next = [...prev];
-            next[i] = { file, img };
-            return next;
-          });
-          setPro((p) => ({ ...p, status: 'Got it!' }));
-        } catch {
-          notify('Capture failed.');
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 650));
-        if (cancelledRef.current) break;
-      }
-      ProCamera.stop();
-      setPro((p) => ({ ...p, running: false, count: null }));
-      if (cancelledRef.current) {
-        setSettings((s) => ({ ...s, mode: 'native' }));
-        notify('Switched to native camera — finish the remaining shots.');
-        return;
-      }
-      go('review');
-    },
-    [settings.layout, settings.countdown, notify, runCountdown, go]
-  );
-
-  const startPro = useCallback(
-    (video: HTMLVideoElement) => {
-      if (!ProCamera.supported()) {
-        notify('Pro camera is not available in this browser.');
-        setSettings((s) => ({ ...s, mode: 'native' }));
-        return;
-      }
-      void runProLoop(video, settings.camera);
-    },
-    [settings.camera, runProLoop, notify]
-  );
-
-  const flipLens = useCallback(
-    (video: HTMLVideoElement) => {
-      const next: Lens = settings.camera === 'user' ? 'environment' : 'user';
-      cancelledRef.current = true;
-      ProCamera.stop();
-      setSettings((s) => ({ ...s, camera: next }));
-      setShots(new Array(Compose.shotsFor(settings.layout)).fill(null));
-      window.setTimeout(() => {
-        void runProLoop(video, next);
-      }, 300);
-    },
-    [settings.camera, settings.layout, runProLoop]
-  );
-
-  const cancelPro = useCallback(() => {
-    cancelledRef.current = true;
-    ProCamera.stop();
-    setPro((p) => ({ ...p, running: false, count: null, status: 'Cancelled' }));
-  }, []);
-
-  /* ---------------- review / result ---------------- */
-
-  const getStripCanvas = useCallback(async (): Promise<HTMLCanvasElement> => {
-    const photos = shots.map((s) => s!.img);
-    return Compose.render({
-      photos,
-      layout: settings.layout,
-      template: settings.template,
-      eventName: settings.eventName,
-      caption: settings.caption,
-      filter: settings.filter,
-      stripNo,
-      ts: Date.now(),
-    });
-  }, [shots, settings, stripNo]);
-
-  const finalize = useCallback(async () => {
-    const canvas = await getStripCanvas();
-    const name = `${slug(settings.eventName)}-strip-${String(stripNo).padStart(3, '0')}.jpg`;
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-    const record = {
-      id: 'strip-' + Date.now(),
-      ts: Date.now(),
-      dataUrl,
-      eventName: settings.eventName,
-      layout: settings.layout,
+      const saved = JSON.parse(localStorage.getItem('booth.settings') || '{}');
+      const next = { ...defaults, ...saved };
+      if (!Compose.LAYOUTS[next.layout as keyof typeof Compose.LAYOUTS]) next.layout = defaults.layout;
+      if (!Compose.TEMPLATES[next.template as keyof typeof Compose.TEMPLATES]) next.template = defaults.template;
+      if (!['native', 'pro', 'upload'].includes(next.mode)) next.mode = 'pro';
+      next.customLayout = sanitize4R(saved.customLayout);
+      for (const key of ['eventName', 'caption', 'frameColor'] as const) if (typeof next[key] !== 'string') next[key] = defaults[key];
+      next.eventName = next.eventName.slice(0, 48); next.caption = next.caption.slice(0, 60);
+      if (!/^#[0-9a-f]{6}$/i.test(next.frameColor)) next.frameColor = '';
+      if (![0, 3, 5, 10].includes(next.countdown)) next.countdown = 3;
+      if (!['natural', 'noir', 'sepia', 'warm', 'vivid', 'cool', 'fade', 'dramatic', 'vintage-film', 'crossprocess', 'teal-orange'].includes(next.filter)) next.filter = 'natural';
+      if (!['user', 'environment'].includes(next.camera)) next.camera = 'user';
+      for (const key of ['soundEnabled', 'flashEnabled', 'countdownSound', 'mirrorMode', 'showGrid', 'showDate'] as const) if (typeof next[key] !== 'boolean') next[key] = defaults[key];
+      settingsRef.current = next; setSettings(next);
+      const number = Number(localStorage.getItem('booth.stripNo')); if (Number.isFinite(number) && number > 0) setStripNo(Math.floor(number));
+    } catch {}
+    if (new URLSearchParams(window.location.search).get('action') === 'setup') setView('setup');
+    void refreshGallery(); void detectCameras();
+    const devices = navigator.mediaDevices;
+    devices?.addEventListener('devicechange', detectCameras);
+    const onHide = () => { if (document.hidden) cancelPro(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      devices?.removeEventListener('devicechange', detectCameras); document.removeEventListener('visibilitychange', onHide);
+      ProCamera.stop(); sequence.current++; session.current++; shotsRef.current.forEach(closeShot);
+      if (toastTimer.current) clearTimeout(toastTimer.current); if (flashTimer.current) clearTimeout(flashTimer.current);
+      void audio.current?.close(); audio.current = null;
     };
+  }, [refreshGallery, detectCameras, cancelPro]);
+  const selectCamera = useCallback((camera: CameraDevice | null) => { setSelectedCamera(camera); cameraRef.current = camera; }, []);
+  const startSession = useCallback(() => {
+    session.current++; cancelPro(); shotsRef.current.forEach(closeShot);
+    replaceShots(new Array(requiredPhotos(settingsRef.current)).fill(null)); sessionTime.current = Date.now();
+    setResult(null); resultCanvas.current = null; setPro(emptyPro); go('capture');
+  }, [cancelPro, replaceShots, go]);
+  const importPhotos = useCallback(async (files: File[], index?: number) => {
+    if (busyRef.current || running.current) return;
+    const slots = index === undefined ? shotsRef.current.map((shot, i) => shot ? -1 : i).filter(i => i >= 0) : [index];
+    if (!slots.length) { notify('Your strip is full. Replace a photo to try another.'); return; }
+    const chosen = files.slice(0, slots.length), request = session.current;
+    if (!chosen.length) return; busyRef.current = true; setBusy(true);
     try {
-      await putStrip(record);
-    } catch (err: unknown) {
-      // Gallery full: evict the oldest strip once, then retry.
-      if (err instanceof Error && err.name === 'QuotaExceededError') {
+      const additions: { index: number; shot: Shot }[] = [];
+      for (let i = 0; i < chosen.length; i++) {
         try {
-          const strips = await allStrips();
-          const oldest = strips[strips.length - 1];
-          if (oldest) {
-            await deleteStrip(oldest.id);
-            await putStrip(record);
-            notify('Gallery was full — oldest strip removed to make room.');
-          } else {
-            notify('Saved, but the gallery is full on this device.');
-          }
-        } catch {
-          notify('Saved, but the gallery is full on this device.');
+          const shot = await makeShot(chosen[i]);
+          if (request !== session.current) { closeShot(shot); break; }
+          additions.push({ index: slots[i], shot });
+        } catch (error) { notify(error instanceof Error ? error.message : 'Could not open photo.'); }
+      }
+      if (request === session.current) {
+        const next = [...shotsRef.current];
+        for (const { index: slot, shot } of additions) { closeShot(next[slot]); next[slot] = shot; }
+        replaceShots(next); if (additions.length) notify(additions.length + (additions.length === 1 ? ' photo added.' : ' photos added.'));
+      } else additions.forEach(({ shot }) => closeShot(shot));
+    } finally { busyRef.current = false; setBusy(false); }
+  }, [notify, replaceShots]);
+  const shootNative = useCallback(async (input: HTMLInputElement, index: number) => {
+    if (busyRef.current || nativePending.current) return;
+    nativePending.current = true; setBusy(true); const request = session.current;
+    try { const file = await takePhoto(input, settingsRef.current.camera); if (request === session.current) await importPhotos([file], index); }
+    catch (error) { if (error instanceof Error && error.message !== 'cancelled') notify(error.message); }
+    finally { nativePending.current = false; setBusy(false); }
+  }, [importPhotos, notify]);
+  const useDemo = useCallback(async () => {
+    if (busyRef.current) return;
+    updateSettings({ mode: 'upload' }); startSession();
+    const request = session.current;
+    try {
+      const paths = ['portrait-1.jpg', 'friends.jpg', 'portrait-3.jpg', 'portrait-2.jpg'];
+      const files: File[] = [];
+      for (let i = 0; i < requiredPhotos(settingsRef.current); i++) {
+        const response = await fetch('/photos/' + paths[i % paths.length]);
+        if (!response.ok) throw new Error('Sample photos could not be opened.');
+        files.push(new File([await response.blob()], 'sample-' + i + '.jpg', { type: 'image/jpeg' }));
+        if (request !== session.current) return;
+      }
+      await importPhotos(files); if (request === session.current && shotsRef.current.every(Boolean)) go('review');
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not load sample photos.'); }
+  }, [updateSettings, startSession, importPhotos, go, notify]);
+  const startPro = useCallback(async (video: HTMLVideoElement, lens?: Lens) => {
+    const request = ++cameraRequest.current;
+    if (!ProCamera.supported()) { setPro({ ...emptyPro, error: 'Live camera needs HTTPS and a browser with camera support. You can upload photos instead.' }); return; }
+    setPro({ ...emptyPro }); stopSequence();
+    try {
+      const s = settingsRef.current;
+      await ProCamera.start(lens || s.camera, video, cameraRef.current?.id || undefined, s.mirrorMode);
+      if (request !== cameraRequest.current) return;
+      setPro(p => ({ ...p, cameraReady: true, status: 'Ready when you are', error: null })); void detectCameras();
+    } catch (error) {
+      if (request !== cameraRequest.current) return;
+      if (error instanceof Error && error.name === 'AbortError') return;
+      const name = error instanceof Error ? error.name : '';
+      const message = name === 'NotAllowedError' ? 'Camera access is blocked. Allow the camera in your browser settings, or upload photos.'
+        : name === 'NotFoundError' ? 'No camera found. Connect a webcam or use photos from your device.'
+        : 'Could not start this camera. Try another camera or upload photos.';
+      setPro(p => ({ ...p, error: message, cameraReady: false, status: 'Camera unavailable' }));
+    }
+  }, [stopSequence, detectCameras]);
+  const flipLens = useCallback((video: HTMLVideoElement) => {
+    const next = settingsRef.current.camera === 'user' ? 'environment' : 'user';
+    selectCamera(null); updateSettings({ camera: next }); void startPro(video, next);
+  }, [selectCamera, updateSettings, startPro]);
+  const beep = useCallback((shutter = false) => {
+    if (!settingsRef.current.soundEnabled) return;
+    try {
+      audio.current ||= new AudioContext(); const ctx = audio.current; void ctx.resume();
+      const oscillator = ctx.createOscillator(), gain = ctx.createGain();
+      oscillator.frequency.value = shutter ? 1200 : 660; gain.gain.setValueAtTime(0.06, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+      oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(); oscillator.stop(ctx.currentTime + 0.11);
+    } catch {}
+  }, []);
+  const captureSequence = useCallback(async (single = false) => {
+    if (running.current || busyRef.current) return;
+    const missing = shotsRef.current.map((shot, i) => shot ? -1 : i).filter(i => i >= 0); if (!missing.length) return;
+    running.current = true; const request = ++sequence.current, sessionId = session.current;
+    const targets = single ? missing.slice(0, 1) : missing; beep();
+    setPro(p => ({ ...p, running: true, error: null }));
+    try {
+      for (const index of targets) {
+        for (let count = settingsRef.current.countdown; count > 0; count--) {
+          if (request !== sequence.current) return;
+          setPro(p => ({ ...p, count, status: 'Photo ' + (index + 1) + ' · ' + (count === 1 ? 'Smile!' : 'Get ready') }));
+          if (settingsRef.current.countdownSound) beep();
+          await sleep(1000);
         }
-      } else {
-        notify('Could not save to the gallery on this device.');
+        if (request !== sequence.current) return;
+        setPro(p => ({ ...p, count: null, status: 'Looking good!', flash: settingsRef.current.flashEnabled }));
+        if (flashTimer.current) clearTimeout(flashTimer.current);
+        flashTimer.current = setTimeout(() => setPro(p => ({ ...p, flash: false })), 160);
+        const canvas = ProCamera.capture(settingsRef.current.camera === 'user' && settingsRef.current.mirrorMode);
+        const shot = await makeShot(await ProCamera.canvasToFile(canvas, 'pocket-shot-' + (index + 1) + '.jpg'));
+        if (request !== sequence.current || sessionId !== session.current) { closeShot(shot); return; }
+        const next = [...shotsRef.current]; closeShot(next[index]); next[index] = shot; replaceShots(next); beep(true);
+        if (index !== targets[targets.length - 1]) await sleep(900);
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : 'Capture failed. Please try again.'); }
+    finally {
+      if (request === sequence.current) {
+        running.current = false;
+        setPro(p => ({ ...p, running: false, count: null, flash: false, status: shotsRef.current.every(Boolean) ? 'All photos captured. Make it yours!' : 'Ready when you are' }));
       }
     }
-    setStripCanvas(canvas);
-    setResult({ dataUrl, name });
-    const nextNo = stripNo + 1;
-    setStripNo(nextNo);
+  }, [replaceShots, notify, beep]);
+  const retakeShot = useCallback((index: number) => {
+    stopSequence(); const next = [...shotsRef.current]; closeShot(next[index]); next[index] = null; replaceShots(next);
+  }, [stopSequence, replaceShots]);
+  const editShot = useCallback((index: number, patch: Partial<NonNullable<Shot['edit']>>) => {
+    const next = [...shotsRef.current], shot = next[index]; if (!shot) return;
+    next[index] = { ...shot, edit: { ...defaultEdit, ...shot.edit, ...patch } }; replaceShots(next);
+  }, [replaceShots]);
+  const moveShot = useCallback((index: number, direction: -1 | 1) => {
+    const next = [...shotsRef.current], other = index + direction; if (other < 0 || other >= next.length) return;
+    [next[index], next[other]] = [next[other], next[index]]; replaceShots(next);
+  }, [replaceShots]);
+  const getStripCanvas = useCallback(async (preview = false) => {
+    const current = shotsRef.current, s = settingsRef.current;
+    if (current.length !== requiredPhotos(s) || current.some(shot => !shot)) throw new Error('Add all photos before making your strip.');
+    return Compose.render({ photos: current.map(shot => shot!.img), edits: current.map(shot => shot!.edit), layout: s.layout,
+      template: s.template, eventName: s.eventName, caption: s.caption, filter: s.filter, stripNo, ts: sessionTime.current,
+      frameColor: s.frameColor, showDate: s.showDate, customLayout: s.customLayout, width: preview ? 480 : undefined });
+  }, [stripNo]);
+  const finalize = useCallback(async () => {
+    if (busyRef.current) return; busyRef.current = true; setBusy(true);
+    const request = session.current;
     try {
-      localStorage.setItem('booth.stripNo', String(nextNo));
-    } catch {
-      /* ignore */
-    }
-    go('result');
-    void refreshGallery();
-  }, [getStripCanvas, settings.eventName, settings.layout, stripNo, notify, refreshGallery, go]);
-
-  const openRecord = useCallback(
-    (rec: StripRecord) => {
-      const full = new Image();
-      full.onload = () => {
-        const cv = document.createElement('canvas');
-        cv.width = full.naturalWidth;
-        cv.height = full.naturalHeight;
-        cv.getContext('2d')!.drawImage(full, 0, 0);
-        setStripCanvas(cv);
-        setResult({ dataUrl: rec.dataUrl, name: `${slug(rec.eventName)}.jpg` });
-        go('result');
-      };
-      full.src = rec.dataUrl;
-    },
-    [go]
-  );
-
+      const canvas = await getStripCanvas(), s = settingsRef.current;
+      if (request !== session.current) return;
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.94), thumb = document.createElement('canvas');
+      thumb.width = 240; thumb.height = Math.round(canvas.height * 240 / canvas.width); thumb.getContext('2d')!.drawImage(canvas, 0, 0, thumb.width, thumb.height);
+      const record: StripRecord = { id: crypto.randomUUID(), ts: sessionTime.current, dataUrl, thumbnailUrl: thumb.toDataURL('image/jpeg', 0.8),
+        eventName: s.eventName || 'Photo booth session', layout: s.layout, template: s.template, photos: [], caption: s.caption, filter: s.filter, width: canvas.width, height: canvas.height, favorite: false, printOrientation: s.layout === 'custom4r' ? s.customLayout.orientation : undefined };
+      let saved = true;
+      try { await putStrip(record); } catch { saved = false; notify('Device storage is full or unavailable. Download this strip to keep it.'); }
+      void refreshGallery(); if (request !== session.current) return;
+      resultCanvas.current = canvas;
+      setResult({ dataUrl, name: slug(s.eventName) + '-strip-' + String(stripNo).padStart(3, '0') + '.jpg', id: record.id, saved, width: canvas.width, height: canvas.height, editable: true, printOrientation: record.printOrientation });
+      setStripNo(stripNo + 1); try { localStorage.setItem('booth.stripNo', String(stripNo + 1)); } catch {}
+      go('result'); void refreshGallery();
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not create your strip.'); }
+    finally { busyRef.current = false; setBusy(false); }
+  }, [getStripCanvas, stripNo, notify, go, refreshGallery]);
+  const openRecord = useCallback((record: StripRecord) => {
+    const request = ++session.current;
+    const img = new Image(); img.onload = () => {
+      if (request !== session.current) return;
+      const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext('2d')!.drawImage(img, 0, 0);
+      resultCanvas.current = cv; setResult({ dataUrl: record.dataUrl, name: slug(record.eventName) + '.jpg', id: record.id, saved: true, width: cv.width, height: cv.height, editable: false, printOrientation: record.printOrientation }); go('result');
+    }; img.onerror = () => notify('Could not open this strip.'); img.src = record.dataUrl;
+  }, [go, notify]);
   const share = useCallback(async () => {
-    if (!stripCanvas || !result) return;
-    try {
-      const res = await Share.shareStrip(stripCanvas, result.name);
-      notify(res === 'shared' ? 'Sent to the share sheet.' : 'Downloaded.');
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name !== 'AbortError')
-        notify('Sharing failed — try Download.');
-    }
-  }, [stripCanvas, result, notify]);
-
-  const download = useCallback(async () => {
-    if (!stripCanvas || !result) return;
-    await Share.downloadStrip(stripCanvas, result.name);
-    notify('Downloaded.');
-  }, [stripCanvas, result, notify]);
-
-  const removeRecord = useCallback(
-    async (id: string) => {
-      await deleteStrip(id);
-      await refreshGallery();
-    },
-    [refreshGallery]
-  );
-
-  const value: BoothValue = {
-    view,
-    settings,
-    shots,
-    stripNo,
-    gallery,
-    toastMsg,
-    pro,
-    result,
-    updateSettings,
-    go,
-    notify,
-    refreshGallery,
-    startSession,
-    shootNative,
-    startPro,
-    flipLens,
-    cancelPro,
-    getStripCanvas,
-    finalize,
-    openRecord,
-    share,
-    download,
-    removeRecord,
-  };
-
-  return <BoothContext.Provider value={value}>{children}</BoothContext.Provider>;
+    if (!resultCanvas.current || !result) return;
+    try { const status = await Share.shareStrip(resultCanvas.current, result.name); notify(status === 'shared' ? 'Shared! Pass the memories around.' : 'Your strip was downloaded.'); }
+    catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) notify('Sharing is unavailable. Try downloading your strip.'); }
+  }, [result, notify]);
+  const download = useCallback(async (format: ImageFormat = 'jpg') => {
+    if (!resultCanvas.current || !result) return;
+    try { await Share.downloadStrip(resultCanvas.current, result.name, format); notify('Your ' + format.toUpperCase() + ' is ready.'); } catch { notify('Could not download. Please try again.'); }
+  }, [result, notify]);
+  const removeRecord = useCallback(async (id: string) => {
+    try { await deleteStrip(id); await refreshGallery(); notify('Strip deleted from this device.'); } catch { notify('Could not delete this strip.'); }
+  }, [refreshGallery, notify]);
+  const toggleFavorite = useCallback(async (id: string) => {
+    const record = gallery.find(r => r.id === id); if (!record) return;
+    try { await putStrip({ ...record, favorite: !record.favorite }); await refreshGallery(); } catch { notify('Could not update favorites.'); }
+  }, [gallery, refreshGallery, notify]);
+  return <Context.Provider value={{ view, settings, shots, stripNo, gallery, galleryLoading, toastMsg, pro, result, busy, cameras, selectedCamera,
+    updateSettings, go, notify, refreshGallery, startSession, shootNative, importPhotos, useDemo, startPro, flipLens, cancelPro, stopSequence,
+    captureSequence, getStripCanvas, finalize, openRecord, share, download, removeRecord, toggleFavorite, detectCameras, selectCamera, retakeShot, moveShot, editShot }}>{children}</Context.Provider>;
 }
