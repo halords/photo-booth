@@ -1,4 +1,4 @@
-const CACHE = 'pocket-studio-v5';
+const CACHE = 'pocket-studio-v6';
 const SHELL = ['/', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/photos/portrait-1.jpg', '/photos/portrait-2.jpg', '/photos/portrait-3.jpg', '/photos/friends.jpg'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => Promise.allSettled(SHELL.map(url => cache.add(url)))).then(() => self.skipWaiting()));
@@ -8,7 +8,7 @@ self.addEventListener('activate', event => {
 });
 self.addEventListener('fetch', event => {
   const request = event.request, url = new URL(request.url);
-  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || request.headers.has('rsc') || url.searchParams.has('_rsc')) return;
+  if (request.method !== 'GET' || url.origin !== self.location.origin || (url.pathname.startsWith('/api/') || url.pathname.startsWith('/share/')) || request.headers.has('rsc') || url.searchParams.has('_rsc')) return;
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
       try { const response = await fetch(request); if (response.ok) { const cache = await caches.open(CACHE); await cache.put('/', response.clone()); } return response; }

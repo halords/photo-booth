@@ -6,13 +6,15 @@ import { takePhoto } from './capture';
 import { ProCamera } from './procamera';
 import { Compose } from './compose';
 import { Share, type ImageFormat } from './share';
-import { allStrips, deleteStrip, putStrip } from './store';
+import { allStrips, deleteStrip, putStrip, sessionFiles } from './store';
 import { DEFAULT_4R, sanitize4R } from './layouts';
 import { isSeasonal, SEASONAL_THEMES } from './seasonal';
 import { DEFAULT_BACKGROUND, sanitizeBackground } from './background';
+import { isSplit, printWidth, requiredPhotos } from './session-settings';
+import { buildSession } from './session-bundle';
 
 interface ProStatus { running: boolean; count: number | null; status: string; cameraReady: boolean; error: string | null; flash: boolean }
-interface Result { dataUrl: string; name: string; id: string; saved: boolean; width: number; height: number; editable: boolean; printOrientation?: 'portrait' | 'landscape' }
+interface Result { dataUrl: string; name: string; id: string; saved: boolean; width: number; height: number; editable: boolean; printOrientation?: 'portrait' | 'landscape'; files?: File[]; assets?: StripRecord['assets']; dpi: number }
 interface BoothValue {
   view: ViewName; settings: Settings; shots: (Shot | null)[]; stripNo: number; gallery: StripRecord[];
   galleryLoading: boolean; toastMsg: string | null; pro: ProStatus; result: Result | null; busy: boolean;
@@ -32,6 +34,7 @@ interface BoothValue {
 const Context = createContext<BoothValue | null>(null);
 export function useBooth() { const value = useContext(Context); if (!value) throw new Error('Missing BoothProvider'); return value; }
 const defaults: Settings = {
+  stripMode: 'single',
   customLayout: DEFAULT_4R,
   stripBackground: DEFAULT_BACKGROUND,
   eventName: '', layout: 'strip4', mode: 'pro', camera: 'user', cameraSource: 'webcam', countdown: 3,
@@ -44,19 +47,11 @@ const emptyPro: ProStatus = { running: false, count: null, status: 'Starting cam
 const defaultEdit = { zoom: 1, x: 0, y: 0, rotation: 0, mirror: false };
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pocket';
 const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
-const requiredPhotos = (s: Settings) => s.layout === 'custom4r' ? s.customLayout.slots.length : Compose.shotsFor(s.layout);
 function closeShot(shot: Shot | null) { if (shot?.img && 'close' in shot.img) shot.img.close(); }
 async function makeShot(file: File): Promise<Shot> {
   if (!file.type.startsWith('image/') && !/\.(heic|heif|jpg|jpeg|png|webp|avif)$/i.test(file.name)) throw new Error('Choose an image file, such as JPG, PNG, or HEIC.');
   if (file.size > 40 * 1024 * 1024) throw new Error('Choose a photo smaller than 40 MB.');
-  let img = await Compose.loadPhoto(file);
-  const width = 'naturalWidth' in img ? img.naturalWidth : img.width, height = 'naturalHeight' in img ? img.naturalHeight : img.height;
-  if (Math.max(width, height) > 2400) {
-    const cv = document.createElement('canvas'), scale = 2400 / Math.max(width, height);
-    cv.width = Math.round(width * scale); cv.height = Math.round(height * scale); cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
-    if ('close' in img) img.close();
-    file = await ProCamera.canvasToFile(cv, file.name.replace(/\.[^.]+$/, '') + '.jpg'); img = await Compose.loadPhoto(file);
-  }
+  const img = await Compose.loadPhoto(file);
   return { file, img, timestamp: Date.now(), cameraSource: 'webcam', edit: { ...defaultEdit } };
 }
 export function BoothProvider({ children }: { children: React.ReactNode }) {
@@ -73,8 +68,10 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
   const nativePending = useRef(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null), flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultCanvas = useRef<HTMLCanvasElement | null>(null), audio = useRef<AudioContext | null>(null);
+  const videoFallbackNotice = useRef(false);
   const sessionTime = useRef(Date.now());
   const viewRef = useRef(view); viewRef.current = view;
+  useEffect(() => () => { if (result?.dataUrl.startsWith('blob:')) URL.revokeObjectURL(result.dataUrl); }, [result?.dataUrl]);
   settingsRef.current = settings; cameraRef.current = selectedCamera;
   const replaceShots = useCallback((next: (Shot | null)[]) => { shotsRef.current = next; setShots(next); }, []);
   const notify = useCallback((message: string) => {
@@ -125,6 +122,8 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
       if (!Compose.LAYOUTS[next.layout as keyof typeof Compose.LAYOUTS]) next.layout = defaults.layout;
       if (!Compose.TEMPLATES[next.template as keyof typeof Compose.TEMPLATES]) next.template = defaults.template;
       if (!['native', 'pro', 'upload'].includes(next.mode)) next.mode = 'pro';
+      if (!['single', 'same', 'different'].includes(next.stripMode)) next.stripMode = 'single';
+      if (![300, 600].includes(next.printDPI)) next.printDPI = 300;
       next.customLayout = sanitize4R(saved.customLayout);
       next.stripBackground = sanitizeBackground(saved.stripBackground);
       for (const key of ['eventName', 'caption', 'frameColor'] as const) if (typeof next[key] !== 'string') next[key] = defaults[key];
@@ -154,6 +153,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
   const startSession = useCallback(() => {
     session.current++; cancelPro(); shotsRef.current.forEach(closeShot);
     replaceShots(new Array(requiredPhotos(settingsRef.current)).fill(null)); sessionTime.current = Date.now();
+    videoFallbackNotice.current = false;
     setResult(null); resultCanvas.current = null; setPro(emptyPro); go('capture');
   }, [cancelPro, replaceShots, go]);
   const importPhotos = useCallback(async (files: File[], index?: number) => {
@@ -193,7 +193,8 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
       const paths = ['portrait-1.jpg', 'friends.jpg', 'portrait-3.jpg', 'portrait-2.jpg'];
       const files: File[] = [];
       for (let i = 0; i < requiredPhotos(settingsRef.current); i++) {
-        const response = await fetch('/photos/' + paths[i % paths.length]);
+        const s = settingsRef.current, sampleIndex = i + (s.stripMode === 'different' && isSplit(s.layout, s.stripMode) && i >= Compose.shotsFor(s.layout) ? 1 : 0);
+        const response = await fetch('/photos/' + paths[sampleIndex % paths.length]);
         if (!response.ok) throw new Error('Sample photos could not be opened.');
         files.push(new File([await response.blob()], 'sample-' + i + '.jpg', { type: 'image/jpeg' }));
         if (request !== session.current) return;
@@ -251,8 +252,14 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
         setPro(p => ({ ...p, count: null, status: 'Looking good!', flash: settingsRef.current.flashEnabled }));
         if (flashTimer.current) clearTimeout(flashTimer.current);
         flashTimer.current = setTimeout(() => setPro(p => ({ ...p, flash: false })), 160);
-        const canvas = ProCamera.capture(settingsRef.current.camera === 'user' && settingsRef.current.mirrorMode);
-        const shot = await makeShot(await ProCamera.canvasToFile(canvas, 'pocket-shot-' + (index + 1) + '.jpg'));
+        const captured = await ProCamera.captureFile('pocket-shot-' + (index + 1) + '.jpg');
+        const shot = await makeShot(captured.file);
+        shot.cameraSource = cameraRef.current?.source || 'webcam';
+        shot.edit = { ...defaultEdit, mirror: settingsRef.current.camera === 'user' && settingsRef.current.mirrorMode };
+        if (!captured.still && !videoFallbackNotice.current) {
+          videoFallbackNotice.current = true;
+          notify('This camera provides video frames. For full camera originals, use Phone camera or upload DSLR photos.');
+        }
         if (request !== sequence.current || sessionId !== session.current) { closeShot(shot); return; }
         const next = [...shotsRef.current]; closeShot(next[index]); next[index] = shot; replaceShots(next); beep(true);
         if (index !== targets[targets.length - 1]) await sleep(900);
@@ -281,7 +288,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     if (current.length !== requiredPhotos(s) || current.some(shot => !shot)) throw new Error('Add all photos before making your strip.');
     return Compose.render({ photos: current.map(shot => shot!.img), edits: current.map(shot => shot!.edit), layout: s.layout,
       template: s.template, eventName: s.eventName, caption: s.caption, filter: s.filter, stripNo, ts: sessionTime.current,
-      frameColor: s.frameColor, showDate: s.showDate, customLayout: s.customLayout, stripBackground: s.stripBackground, width: preview ? 480 : undefined });
+      frameColor: s.frameColor, showDate: s.showDate, customLayout: s.customLayout, stripBackground: s.stripBackground, stripMode: s.stripMode, width: preview ? 480 : printWidth(s) });
   }, [stripNo]);
   const finalize = useCallback(async () => {
     if (busyRef.current) return; busyRef.current = true; setBusy(true);
@@ -289,17 +296,21 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     try {
       const canvas = await getStripCanvas(), s = settingsRef.current;
       if (request !== session.current) return;
+      const bundle = await buildSession(canvas, shotsRef.current as Shot[], s.filter, s.printDPI);
+      if (request !== session.current) return;
       const occasion = s.layout === 'custom4r' ? s.customLayout.decoration : s.template;
       const eventName = s.eventName || (isSeasonal(occasion) ? occasion === 'halloween' ? SEASONAL_THEMES.halloween.sub : SEASONAL_THEMES.christmas.title : 'Photo booth session');
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.94), thumb = document.createElement('canvas');
+      const thumb = document.createElement('canvas');
       thumb.width = 240; thumb.height = Math.round(canvas.height * 240 / canvas.width); thumb.getContext('2d')!.drawImage(canvas, 0, 0, thumb.width, thumb.height);
-      const record: StripRecord = { id: crypto.randomUUID(), ts: sessionTime.current, dataUrl, thumbnailUrl: thumb.toDataURL('image/jpeg', 0.8),
-        eventName, layout: s.layout, template: s.template, photos: [], caption: s.caption, filter: s.filter, width: canvas.width, height: canvas.height, favorite: false, printOrientation: s.layout === 'custom4r' ? s.customLayout.orientation : undefined };
+      const thumbnailUrl = thumb.toDataURL('image/jpeg', 0.85);
+      const record: StripRecord = { id: crypto.randomUUID(), ts: sessionTime.current, dataUrl: thumbnailUrl, thumbnailUrl,
+        assets: bundle.assets, dpi: s.printDPI, stripMode: s.stripMode,
+        eventName, layout: s.layout, template: s.template, photos: [], caption: s.caption, filter: s.filter, width: canvas.width, height: canvas.height, favorite: false, printOrientation: s.layout === 'custom4r' ? s.customLayout.orientation : isSplit(s.layout, s.stripMode) ? 'portrait' : undefined };
       let saved = true;
-      try { await putStrip(record); } catch { saved = false; notify('Device storage is full or unavailable. Download this strip to keep it.'); }
+      try { await putStrip(record, bundle.files); } catch { saved = false; notify('Browser cache is full or unavailable. Download this session folder to keep it.'); }
       void refreshGallery(); if (request !== session.current) return;
       resultCanvas.current = canvas;
-      setResult({ dataUrl, name: slug(s.eventName || (isSeasonal(occasion) ? eventName : '')) + '-strip-' + String(stripNo).padStart(3, '0') + '.jpg', id: record.id, saved, width: canvas.width, height: canvas.height, editable: true, printOrientation: record.printOrientation });
+      setResult({ dataUrl: URL.createObjectURL(bundle.files[0]), files: bundle.files, assets: bundle.assets, dpi: s.printDPI, name: slug(s.eventName || (isSeasonal(occasion) ? eventName : '')) + '-strip-' + String(stripNo).padStart(3, '0') + '.jpg', id: record.id, saved, width: canvas.width, height: canvas.height, editable: true, printOrientation: record.printOrientation });
       setStripNo(stripNo + 1); try { localStorage.setItem('booth.stripNo', String(stripNo + 1)); } catch {}
       go('result'); void refreshGallery();
     } catch (error) { notify(error instanceof Error ? error.message : 'Could not create your strip.'); }
@@ -307,20 +318,26 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
   }, [getStripCanvas, stripNo, notify, go, refreshGallery]);
   const openRecord = useCallback((record: StripRecord) => {
     const request = ++session.current;
-    const img = new Image(); img.onload = () => {
-      if (request !== session.current) return;
-      const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext('2d')!.drawImage(img, 0, 0);
-      resultCanvas.current = cv; setResult({ dataUrl: record.dataUrl, name: slug(record.eventName) + '.jpg', id: record.id, saved: true, width: cv.width, height: cv.height, editable: false, printOrientation: record.printOrientation }); go('result');
-    }; img.onerror = () => notify('Could not open this strip.'); img.src = record.dataUrl;
+    void (async () => {
+      let url: string | undefined;
+      try {
+        const files = record.assets?.length ? await sessionFiles(record) : undefined;
+        url = files ? URL.createObjectURL(files[0]) : record.dataUrl;
+        const img = new Image(); img.src = url; await img.decode();
+        if (request !== session.current) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return; }
+        const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext('2d')!.drawImage(img, 0, 0);
+        resultCanvas.current = cv; setResult({ dataUrl: url, files, assets: record.assets, dpi: record.dpi || 300, name: slug(record.eventName) + '-' + record.id.slice(0, 8) + '.jpg', id: record.id, saved: true, width: cv.width, height: cv.height, editable: false, printOrientation: record.printOrientation }); go('result');
+      } catch (error) { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); notify(error instanceof Error ? error.message : 'Could not open this session.'); }
+    })();
   }, [go, notify]);
   const share = useCallback(async () => {
     if (!resultCanvas.current || !result) return;
-    try { const status = await Share.shareStrip(resultCanvas.current, result.name); notify(status === 'shared' ? 'Shared! Pass the memories around.' : 'Your strip was downloaded.'); }
+    try { const status = await Share.shareStrip(resultCanvas.current, result.name, result.dpi); notify(status === 'shared' ? 'Shared! Pass the memories around.' : 'Your strip was downloaded.'); }
     catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) notify('Sharing is unavailable. Try downloading your strip.'); }
   }, [result, notify]);
   const download = useCallback(async (format: ImageFormat = 'jpg') => {
     if (!resultCanvas.current || !result) return;
-    try { await Share.downloadStrip(resultCanvas.current, result.name, format); notify('Your ' + format.toUpperCase() + ' is ready.'); } catch { notify('Could not download. Please try again.'); }
+    try { await Share.downloadStrip(resultCanvas.current, result.name, format, result.dpi); notify('Your ' + format.toUpperCase() + ' is ready.'); } catch { notify('Could not download. Please try again.'); }
   }, [result, notify]);
   const removeRecord = useCallback(async (id: string) => {
     try { await deleteStrip(id); await refreshGallery(); notify('Strip deleted from this device.'); } catch { notify('Could not delete this strip.'); }

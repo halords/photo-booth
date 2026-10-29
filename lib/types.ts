@@ -9,9 +9,11 @@ export type StripOrientation = 'portrait' | 'landscape';
 export type StripSize = 'standard' | 'mini' | 'wide' | 'square';
 export type ExportFormat = 'jpg' | 'png' | 'pdf';
 export type PrintDPI = 150 | 300 | 600;
+export type StripMode = 'single' | 'same' | 'different';
 export type OverlayType = 'hat' | 'glasses' | 'mustache' | 'frame' | 'text' | 'custom';
 
 export interface Settings {
+  stripMode: StripMode;
   customLayout: CustomLayout;
   stripBackground: PrintBackground;
   eventName: string;
@@ -83,6 +85,9 @@ export interface DSLRShotSettings {
 }
 
 export interface StripRecord {
+  assets?: SessionAsset[];
+  dpi?: number;
+  stripMode?: StripMode;
   printOrientation?: StripOrientation;
   id: string;
   ts: number;
@@ -96,6 +101,15 @@ export interface StripRecord {
   caption?: string;
   filter?: FilterId;
   favorite?: boolean;
+  width?: number;
+  height?: number;
+}
+
+export interface SessionAsset {
+  name: string;
+  type: string;
+  size: number;
+  kind: 'layout' | 'shot' | 'gif';
   width?: number;
   height?: number;
 }

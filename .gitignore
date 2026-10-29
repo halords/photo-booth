@@ -5,3 +5,8 @@ out/
 .DS_Store
 .artifacts/
 *.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+.vercel

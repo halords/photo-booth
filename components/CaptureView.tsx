@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useBooth } from '@/lib/booth';
-import { LAYOUTS } from '@/lib/compose';
+import { isStrip, requiredPhotos } from '@/lib/session-settings';
+import { downloadFile } from '@/lib/share';
 import Icon from './Icon';
 import ShotImage from './ShotImage';
 import Steps from './Steps';
@@ -10,7 +11,7 @@ export default function CaptureView() {
   const { settings, shots, pro, busy, startPro, cancelPro, captureSequence, stopSequence, flipLens, importPhotos, shootNative, go, retakeShot, updateSettings } = useBooth();
   const video = useRef<HTMLVideoElement>(null), input = useRef<HTMLInputElement>(null), native = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false), [single, setSingle] = useState(false), [target, setTarget] = useState<number | undefined>();
-  const total = settings.layout === 'custom4r' ? settings.customLayout.slots.length : LAYOUTS[settings.layout].shots, done = shots.filter(Boolean).length, complete = done === total;
+  const total = requiredPhotos(settings), done = shots.filter(Boolean).length, complete = done === total;
   const live = settings.mode === 'pro', missing = shots.findIndex(s => !s);
   const sequenceRef = useRef(captureSequence); sequenceRef.current = captureSequence;
   useEffect(() => {
@@ -53,9 +54,9 @@ export default function CaptureView() {
           <small>JPG, PNG, WebP, and supported HEIC · up to 40 MB each</small>
           {settings.mode === 'upload' && !complete && <button className="text-button" onClick={() => updateSettings({ mode: 'pro' })}>Prefer to take new photos? Open the camera <Icon name="arrow" size={16} /></button>}
         </div>}
-    </div><aside className="capture-rail panel"><div className="panel-heading"><h3>Your frames</h3><span>{done} of {total}</span></div><p className="control-hint">A new expression for every frame.</p>
+    </div><aside className="capture-rail panel"><div className="panel-heading"><h3>Your frames</h3><span>{done} of {total}</span></div><p className="control-hint">{isStrip(settings.layout) && settings.stripMode === 'different' && total > 1 ? 'First half: strip A. Second half: strip B.' : 'A new expression for every frame.'}</p>
       <div className="shot-list">{Array.from({ length: total }, (_, i) => <div key={i} className={'shot-slot ' + (shots[i] ? 'filled' : missing === i ? 'next' : '')}><span className="shot-number">{String(i + 1).padStart(2, '0')}</span>
-        {shots[i] ? <><ShotImage file={shots[i]!.file} alt={'Captured photo ' + (i + 1)} /><button className="shot-replace" disabled={pro.running || busy} aria-label={'Replace photo ' + (i + 1)} onClick={() => live ? retakeShot(i) : choose(i)}><Icon name="refresh" size={15} />{live ? 'Retake' : 'Replace'}</button></> : <><Icon name="image" size={26} /><span>{missing === i ? 'Your next moment' : 'Waiting for a memory'}</span></>}
+        {shots[i] ? <><ShotImage file={shots[i]!.file} alt={'Captured photo ' + (i + 1)} /><button className="shot-download" aria-label={'Download original photo ' + (i + 1)} onClick={() => downloadFile(shots[i]!.file)}><Icon name="download" size={16} /></button><button className="shot-replace" disabled={pro.running || busy} aria-label={'Replace photo ' + (i + 1)} onClick={() => live ? retakeShot(i) : choose(i)}><Icon name="refresh" size={15} />{live ? 'Retake' : 'Replace'}</button></> : <><Icon name="image" size={26} /><span>{missing === i ? 'Your next moment' : 'Waiting for a memory'}</span></>}
       </div>)}</div><button className="btn btn-primary full-width" disabled={!complete || pro.running || busy} onClick={() => go('review')}>Make it yours <Icon name="arrow" size={17} /></button>
       <button className="text-button full-width" disabled={pro.running || busy || complete} onClick={() => choose()}><Icon name="upload" size={16} /> Add from your device</button>
     </aside></div><button className="text-button back-link" disabled={busy} onClick={() => go('setup')}><Icon name="back" size={16} /> Back to setup</button>

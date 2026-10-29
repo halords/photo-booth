@@ -1,6 +1,6 @@
 # Pocket Photo Booth
 
-A private photo booth for everyday moments and events. Built with Next.js 15, React 19, TypeScript, browser canvas, and IndexedDB.
+A private photo booth for everyday moments and events. Built with Next.js 15, React 19, TypeScript, browser canvas, and browser Cache Storage.
 
 ## Run locally
 
@@ -17,9 +17,17 @@ Choose a layout and style, take a timed series with a live camera, use the phone
 
 The gallery includes search, favorites, sorting, and deletion. Settings persist between visits. Camera tracks stop when leaving capture, hiding the page, or ending a session. Sound, screen flash, mirroring, and framing guides are optional.
 
+## Print quality, two-strip sheets, and complete sessions
+
+- Choose **300 DPI** or **600 DPI** in setup. Layout dimensions and JPEG/PNG density metadata follow the selection. Higher DPI adds output pixels; it cannot restore missing source detail.
+- Strip layouts support **One strip**, **Two - same photos**, and **Two - different photos**. Paired strips fill a 4 x 6 inch sheet, cut into two 2 x 6 inch strips. Different-photo mode captures twice as many photos: the first half fills strip A, the second half fills strip B. Previews, retakes, editing, and exports use this order.
+- Download an original shot immediately in capture, or open **Individual shots** on the result screen. Original downloads are byte-for-byte camera/upload files; edits and filters appear in the final layout and GIF.
+- **Download session ZIP** puts the lossless print layout, original individual shots, and GIF inside one named folder. **Save folder to device** uses a directory picker where available, with a ZIP fallback on phones. Individual save actions use the system share sheet where supported.
+- GIF generation runs in a worker at 800 x 800, 650 ms per photo, looping continuously. Animation resolution is independent of photo/print resolution.
+
 ## Seasonal photo booth designs
 
-In **Photo booth → Frame & filter**, choose **Halloween** for the **PGLU Halloween Special** design or **Christmas** for an evergreen holiday design. Halloween includes pumpkins, bats, a moon, cobwebs, and a ghost; Christmas includes evergreen sprigs, ornaments, snowflakes, and gold stars. The designs work with every strip and grid layout and appear in previews, saved gallery images, and JPG/PNG exports.
+In **Photo booth â†’ Frame & filter**, choose **Halloween** for the **PGLU Halloween Special** design or **Christmas** for an evergreen holiday design. Halloween includes pumpkins, bats, a moon, cobwebs, and a ghost; Christmas includes evergreen sprigs, ornaments, snowflakes, and gold stars. The designs work with every strip and grid layout and appear in previews, saved gallery images, and JPG/PNG exports.
 
 For **Custom 4R**, choose **PGLU Halloween Special** or **Christmas** under **Occasion style**. Both portrait and landscape prints are supported. Selecting a seasonal frame also selects its matching 4R occasion style. Personal captions and event names override the theme's default wording. Uploaded event artwork replaces the decorative background until removed. Seasonal selections persist between visits and in saved layout files.
 
@@ -27,7 +35,7 @@ For **Custom 4R**, choose **PGLU Halloween Special** or **Christmas** under **Oc
 
 Select **Photo booth -> Custom 4R** under Layout & camera.
 
-- Portrait is 4 x 6 inches / 1200 x 1800 pixels. Landscape is 6 x 4 inches / 1800 x 1200 pixels. Exports include 300 DPI metadata.
+- At 300 DPI, portrait is 4 x 6 inches / 1200 x 1800 pixels and landscape is 6 x 4 inches / 1800 x 1200 pixels. At 600 DPI, both dimensions double. Exports include the selected print density.
 - Add one to six editable photo placeholders. Drag a frame to position it, drag its corner to resize, or use numeric fields for size, position, and rotation. Arrow keys move a focused frame; Shift moves it five percentage points.
 - Choose a birthday, celebration, minimal, PGLU Halloween Special, or Christmas background, or upload your event artwork. Add the occasion name and message in Personal touches.
 - Photos fill placeholders in their numbered order. Overlapping frames layer in that same order. The required number of captures follows the placeholder count.
@@ -38,7 +46,7 @@ Select **Photo booth -> Custom 4R** under Layout & camera.
 
 ## Custom backgrounds and text-free prints
 
-Under **Photo booth → Frame & filter → Your own background**, upload a JPG, PNG, or WebP design for any strip, grid, or 4R layout. The same controls are available in **Frame** during review and inside the custom 4R editor. Replace or remove the artwork at any time.
+Under **Photo booth â†’ Frame & filter â†’ Your own background**, upload a JPG, PNG, or WebP design for any strip, grid, or 4R layout. The same controls are available in **Frame** during review and inside the custom 4R editor. Replace or remove the artwork at any time.
 
 - **Fill frame** crops the edges to cover the print; **Fit entire design** keeps all artwork visible; **Stretch to frame** matches the print dimensions. Adjust horizontal/vertical placement or center it again. Frame color fills transparent or uncovered areas.
 - Turn off **Show frame text** to remove all app-added titles, captions, branding, dates, strip numbers, and film photo numbers. Text already included in uploaded artwork remains part of that artwork. This switch also works with built-in themes without an uploaded background.
@@ -47,9 +55,11 @@ Under **Photo booth → Frame & filter → Your own background**, upload a JPG, 
 
 ## Privacy, storage, and compatibility
 
-Captured and uploaded photos are processed locally. There is no account or remote photo upload. Finished gallery images are stored in this browser on this device. Download valuable images before clearing browser storage. Original photos are held in memory for the current session; reopening a gallery item provides export and sharing of the finished image, rather than reconstructing the original editing session.
+Captured and uploaded photos retain their original files and dimensions. The phone-camera input keeps the file supplied by the camera app. Live capture uses the browser ImageCapture still-photo API at its default settings when available, otherwise the highest negotiated video-frame resolution. USB webcams, DSLR webcam drivers, and capture cards cannot expose more detail than their driver provides; upload original DSLR still files for full sensor resolution. HEIC decoding depends on browser support.
 
-USB cameras are supported when the browser sees them as a video input. Direct DSLR control, green screen processing, PDF export, and video capture are not exposed as implemented features. HEIC input depends on browser decoding; JPG, PNG, and WebP are more broadly supported. Web Share and native camera input vary by device. When file sharing is unavailable, the share action downloads the image.
+New gallery sessions use browser Cache Storage, without a photo database. The complete session includes a lossless PNG layout, untouched individual files, and an 800 x 800 looping GIF. Reopening a cached session retains all these downloads. Existing IndexedDB galleries from older versions remain readable, but new sessions and favorite changes are written to the cache. Download valuable sessions before clearing browser storage; browsers can evict cached data.
+
+Sharing a **24-hour link** explicitly uploads the session ZIP to a private R2 bucket, or to temporary storage on a single Node server when R2 is not configured. Friends see a browser preview gallery and can download individual items or the entire ZIP. No manual unzipping is needed for previews. Files stay local until this link action. See [temporary sharing setup](docs/temporary-sharing.md) for keys, CORS, automatic deletion, hosting requirements, and limits. System sharing and save-to-device support vary by browser; ZIP downloads work as a fallback.
 
 In production, the service worker caches the shell, local sample photos, and loaded static assets. Navigation checks the network first; visited assets support offline reuse. Registration is disabled during development.
 
@@ -58,6 +68,7 @@ In production, the service worker caches the shell, local sample photos, and loa
 ```sh
 npm run typecheck
 npm run build
+npm run test:sessions
 ```
 
 `scripts/smoke.cjs` runs browser checks against a running production server (default http://localhost:3091). Supply a Playwright module via `PLAYWRIGHT_MODULE` if it is not installed as `playwright`, and optionally `CHROME_PATH` and `BOOTH_URL`. It checks desktop/mobile overflow, custom 4R editing, JPG/PNG signatures and density, uploads, gallery persistence, camera capture with a simulated feed, retakes, cancellation, and stream cleanup. Test images and screenshots go to `.artifacts/`.
@@ -79,9 +90,13 @@ npm run build
 
 ## Sample photo credits
 
-Bundled sample/demo photos were sourced from Unsplash. They are visual examples; your own images never leave the device.
+Bundled sample/demo photos were sourced from Unsplash. They are visual examples. Photos leave the device only when you choose to share them.
 
 - https://images.unsplash.com/photo-1524504388940-b1c1722653e1
 - https://images.unsplash.com/photo-1506794778202-cad84cf45f1d
 - https://images.unsplash.com/photo-1529156069898-49953e39b3ac
 - https://images.unsplash.com/photo-1534528741775-53994a69daeb
+
+`test:sessions` checks original-file byte preservation above 2400px, default still-camera capture, both paired-strip modes, 300/600 DPI output, GIFs, folder/ZIP downloads, cache-only persistence, shared browser previews, original downloads from a fresh browser, mobile layout, invalid uploads, and expiry. Run a production server with `BOOTH_SHARE_STORAGE=local` and a test-only `BOOTH_SHARE_DIR` for the local-cache tests.
+
+`test:r2-live` requires configured credentials and synthetic artifacts from `test:sessions`; it uploads one test ZIP, verifies signed upload/download bytes, and leaves the object for inspection. `node scripts/r2-live-test.cjs --delete` deletes only the recorded test object and verifies removal. The script never prints credentials.

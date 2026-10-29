@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "Expire photo booth sessions after one day",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "sessions/" },
+      "Expiration": { "Days": 1 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}

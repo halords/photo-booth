@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["http://localhost:3000", "http://localhost:3091", "https://photo-booth-theta-fawn.vercel.app"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]

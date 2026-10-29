@@ -45,7 +45,7 @@ export default function CustomLayoutEditor({ allowStructure = true }: { allowStr
     } catch { notify('Choose a valid Pocket event layout JSON file.'); }
   };
   return <div className="custom-layout-editor">
-    <div className="custom-layout-heading"><div><h3>Design your 4R keepsake</h3><p className="control-hint">4 × 6 inches · 300 DPI · {count} photo{count > 1 ? 's' : ''}</p></div><span className="pill subtle">Event ready</span></div>
+    <div className="custom-layout-heading"><div><h3>Design your 4R keepsake</h3><p className="control-hint">4 × 6 inches · {settings.printDPI} DPI · {count} photo{count > 1 ? 's' : ''}</p></div><span className="pill subtle">Event ready</span></div>
     <div className="custom-layout-options"><label className="field"><span>Print orientation</span><select aria-label="4R orientation" value={layout.orientation} onChange={e => {
       const preset = create4RLayout(e.target.value as 'portrait' | 'landscape', count, layout.decoration);
       change({ ...preset, backgroundDataUrl: layout.backgroundDataUrl, backgroundOptions: layout.backgroundOptions });

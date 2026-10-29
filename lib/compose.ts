@@ -1,6 +1,6 @@
 'use client';
 
-import type { CustomLayout, FilterId, LayoutId, PrintBackground, Shot, TemplateId } from './types';
+import type { CustomLayout, FilterId, LayoutId, PrintBackground, Shot, TemplateId, StripMode } from './types';
 import { applyFilterToCanvas } from './filters';
 import { drawSeasonalFrame, isSeasonal, SEASONAL_THEMES } from './seasonal';
 import { drawBackground, sanitizeBackground } from './background';
@@ -12,6 +12,8 @@ export interface RenderOpts {
   width?: number; frameColor?: string; showDate?: boolean; edits?: (Shot['edit'])[];
   customLayout?: CustomLayout;
   stripBackground?: PrintBackground;
+  stripMode?: StripMode;
+  height?: number;
 }
 export const LAYOUTS: Record<LayoutId, { shots: number; cols: number; rows: number }> = {
   strip2: { shots: 2, cols: 1, rows: 2 }, strip3: { shots: 3, cols: 1, rows: 3 },
@@ -32,7 +34,7 @@ export const TEMPLATES: Record<TemplateId, { name: string; sub: string; color: s
   halloween: SEASONAL_THEMES.halloween,
   christmas: SEASONAL_THEMES.christmas,
 };
-function size(img: PhotoImage): [number, number] {
+export function size(img: PhotoImage): [number, number] {
   return img instanceof HTMLImageElement ? [img.naturalWidth, img.naturalHeight] : [img.width, img.height];
 }
 function drawPhoto(ctx: CanvasRenderingContext2D, img: PhotoImage, x: number, y: number, w: number, h: number, edit: Shot['edit']) {
@@ -57,16 +59,18 @@ function fittedText(ctx: CanvasRenderingContext2D, value: string, x: number, y: 
 }
 export async function render(o: RenderOpts): Promise<HTMLCanvasElement> {
   if (o.layout === 'custom4r' && o.customLayout) return render4R(o);
+  if (/^strip[2346]$/.test(o.layout) && (o.stripMode === 'same' || o.stripMode === 'different')) return renderSplit(o);
   const spec = LAYOUTS[o.layout] || LAYOUTS.strip4, theme = TEMPLATES[o.template] || TEMPLATES['polaroid-white'];
   const seasonal = isSeasonal(o.template) ? SEASONAL_THEMES[o.template] : null;
   const background = sanitizeBackground(o.stripBackground), hasArtwork = !!background.dataUrl, showText = background.showText;
   const W = o.width || (spec.cols === 1 ? 1200 : 1800);
   const pad = W * (o.template === 'film' ? 0.085 : 0.065), gap = W * (o.layout === 'collage' ? 0.012 : 0.032);
   const cellW = (W - 2 * pad - gap * (spec.cols - 1)) / spec.cols;
-  const cellH = cellW * (o.layout === 'single' ? 1.2 : spec.cols === 1 ? 0.75 : 1);
   const top = seasonal ? W * .25 : o.template === 'editorial' || o.template === 'modern' ? W * 0.19 : pad;
-  const photosH = spec.rows * cellH + (spec.rows - 1) * gap, footer = W * (spec.cols === 1 ? 0.29 : 0.2);
-  const H = Math.ceil(top + photosH + footer);
+  const footer = W * (spec.cols === 1 ? 0.29 : 0.2);
+  const cellH = o.height ? (o.height - top - footer - (spec.rows - 1) * gap) / spec.rows : cellW * (o.layout === 'single' ? 1.2 : spec.cols === 1 ? 0.75 : 1);
+  const photosH = spec.rows * cellH + (spec.rows - 1) * gap;
+  const H = o.height || Math.ceil(top + photosH + footer);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Your browser could not create the photo strip.');
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
@@ -108,6 +112,35 @@ export async function render(o: RenderOpts): Promise<HTMLCanvasElement> {
   ctx.globalAlpha = 0.65;
   const stamp = o.showDate === false ? 'POCKET PHOTO BOOTH' : new Date(o.ts || Date.now()).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).toUpperCase();
   fittedText(ctx, stamp + '  /  NO. ' + String(o.stripNo).padStart(3, '0'), W / 2, base + footer * 0.71, W - pad * 2, W * 0.017, 'Arial, sans-serif');
+  return canvas;
+}
+
+/** Two cuttable 2 x 6 inch strips on a true 4 x 6 inch sheet. */
+async function renderSplit(o: RenderOpts) {
+  const canvas = document.createElement('canvas');
+  canvas.width = o.width || 1200; canvas.height = Math.round(canvas.width * 1.5);
+  const ctx = canvas.getContext('2d')!;
+  const count = LAYOUTS[o.layout].shots, half = Math.floor(canvas.width / 2);
+  for (let side = 0; side < 2; side++) {
+    const start = o.stripMode === 'different' ? side * count : 0;
+    const strip = await render({ ...o, stripMode: 'single', width: side ? canvas.width - half : half, height: canvas.height,
+      photos: o.photos.slice(start, start + count), edits: o.edits?.slice(start, start + count) });
+    ctx.drawImage(strip, side * half, 0);
+    strip.width = strip.height = 0;
+  }
+  ctx.save(); ctx.strokeStyle = '#88888880'; ctx.lineWidth = Math.max(1, canvas.width / 1200);
+  ctx.setLineDash([canvas.width * .005, canvas.width * .005]); ctx.beginPath(); ctx.moveTo(half, 0); ctx.lineTo(half, canvas.height); ctx.stroke(); ctx.restore();
+  return canvas;
+}
+
+/** Full-size edited frame for the digital animation, without altering its source file. */
+export function renderShot(shot: Shot, filter: FilterId, maxEdge: number) {
+  const [iw, ih] = size(shot.img), rotated = Math.abs(shot.edit?.rotation || 0) % 180 === 90;
+  const w = rotated ? ih : iw, h = rotated ? iw : ih, scale = Math.min(1, maxEdge / Math.max(w, h));
+  const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(w * scale)); canvas.height = Math.max(1, Math.round(h * scale));
+  const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  drawPhoto(ctx, shot.img, 0, 0, canvas.width, canvas.height, shot.edit);
+  applyFilterToCanvas(ctx, 0, 0, canvas.width, canvas.height, filter);
   return canvas;
 }
 
