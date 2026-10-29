@@ -4,12 +4,14 @@ import { useBooth } from '@/lib/booth';
 import { Compose } from '@/lib/compose';
 import { constrainSlot, create4RLayout, sanitize4R } from '@/lib/layouts';
 import type { PhotoPlaceholder } from '@/lib/types';
+import { isSeasonal } from '@/lib/seasonal';
 import Icon from './Icon';
+import BackgroundControls from './BackgroundControls';
 
 export default function CustomLayoutEditor({ allowStructure = true }: { allowStructure?: boolean }) {
   const { settings, shots, updateSettings, notify } = useBooth(), layout = settings.customLayout;
-  const [selected, setSelected] = useState(0), [backgroundBusy, setBackgroundBusy] = useState(false);
-  const canvas = useRef<HTMLCanvasElement>(null), stage = useRef<HTMLDivElement>(null), backgroundInput = useRef<HTMLInputElement>(null), layoutInput = useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = useState(0);
+  const canvas = useRef<HTMLCanvasElement>(null), stage = useRef<HTMLDivElement>(null), layoutInput = useRef<HTMLInputElement>(null);
   const latest = useRef(layout); latest.current = layout;
   const slot = layout.slots[Math.min(selected, layout.slots.length - 1)];
   const drag = useRef<{ id: number; x: number; y: number; slot: PhotoPlaceholder; index: number; resize: boolean; bounds: DOMRect } | null>(null);
@@ -26,17 +28,6 @@ export default function CustomLayoutEditor({ allowStructure = true }: { allowStr
     }).then(rendered => { if (!cancelled && canvas.current) { canvas.current.width = rendered.width; canvas.current.height = rendered.height; canvas.current.getContext('2d')!.drawImage(rendered, 0, 0); } }).catch(e => { if (!cancelled) notify(e.message); }); }, 45);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [layout, shots, settings.template, settings.eventName, settings.caption, settings.filter, settings.frameColor, settings.showDate, notify, allowStructure]);
-  const loadBackground = async (file?: File) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/') || file.size > 40 * 1024 * 1024) { notify('Choose a background image smaller than 40 MB.'); return; }
-    setBackgroundBusy(true);
-    try {
-      const img = await Compose.loadPhoto(file), w = 'naturalWidth' in img ? img.naturalWidth : img.width, h = 'naturalHeight' in img ? img.naturalHeight : img.height;
-      const cv = document.createElement('canvas'), scale = Math.min(1, 1800 / Math.max(w, h)); cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);
-      cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height); if ('close' in img) img.close();
-      change({ backgroundDataUrl: cv.toDataURL('image/jpeg', .86) }); notify('Event background added. Photos will sit above it.');
-    } catch { notify('Could not open that background. Try a JPG or PNG.'); } finally { setBackgroundBusy(false); }
-  };
   const count = layout.slots.length;
   const exportLayout = () => {
     const blob = new Blob([JSON.stringify({ version: 1, type: 'pocket-4r', layout, eventName: settings.eventName, caption: settings.caption, frameColor: settings.frameColor, showDate: settings.showDate, template: settings.template }, null, 2)], { type: 'application/json' });
@@ -57,9 +48,14 @@ export default function CustomLayoutEditor({ allowStructure = true }: { allowStr
     <div className="custom-layout-heading"><div><h3>Design your 4R keepsake</h3><p className="control-hint">4 × 6 inches · 300 DPI · {count} photo{count > 1 ? 's' : ''}</p></div><span className="pill subtle">Event ready</span></div>
     <div className="custom-layout-options"><label className="field"><span>Print orientation</span><select aria-label="4R orientation" value={layout.orientation} onChange={e => {
       const preset = create4RLayout(e.target.value as 'portrait' | 'landscape', count, layout.decoration);
-      change({ ...preset, backgroundDataUrl: layout.backgroundDataUrl });
+      change({ ...preset, backgroundDataUrl: layout.backgroundDataUrl, backgroundOptions: layout.backgroundOptions });
     }}><option value="portrait">Portrait · 4 × 6 in</option><option value="landscape">Landscape · 6 × 4 in</option></select></label>
-    <label className="field"><span>Occasion style</span><select aria-label="Occasion style" value={layout.decoration} onChange={e => change({ decoration: e.target.value as typeof layout.decoration })}><option value="birthday">Birthday confetti</option><option value="celebration">Celebration</option><option value="minimal">Minimal</option></select></label></div>
+    <label className="field"><span>Occasion style</span><select aria-label="Occasion style" value={layout.decoration} onChange={e => {
+      const decoration = e.target.value as typeof layout.decoration;
+      updateSettings({ customLayout: { ...latest.current, decoration }, frameColor: '',
+        template: isSeasonal(decoration) ? decoration : isSeasonal(settings.template) ? 'polaroid-white' : settings.template });
+    }}><option value="birthday">Birthday confetti</option><option value="celebration">Celebration</option><option value="minimal">Minimal</option><option value="halloween">PGLU Halloween Special</option><option value="christmas">Christmas</option></select></label></div>
+    {layout.backgroundDataUrl && <p className="control-hint">Your uploaded artwork replaces the occasion background. Remove it to see the theme decorations.</p>}
     <div className="layout-designer-stage" ref={stage} style={{ aspectRatio: layout.orientation === 'portrait' ? '2 / 3' : '3 / 2' }}>
       <canvas ref={canvas} aria-label="4R event layout preview" />
       <div className="placeholder-layer">{layout.slots.map((s, i) => <div role="button" tabIndex={0} key={s.id} aria-label={'Photo placeholder ' + (i + 1) + '. Drag to move or use arrow keys.'} aria-pressed={selected === i}
@@ -82,10 +78,10 @@ export default function CustomLayoutEditor({ allowStructure = true }: { allowStr
       {allowStructure && <div className="button-row"><button className="btn btn-secondary small" disabled={count >= 6} onClick={() => { change({ slots: [...layout.slots, { id: crypto.randomUUID(), x: 15, y: 30, width: 60, height: 25, rotation: 0 }] }); setSelected(count); }}>+ Add frame</button><button className="icon-button" aria-label="Remove selected placeholder" disabled={count <= 1} onClick={() => { change({ slots: layout.slots.filter((_, i) => i !== selected) }); setSelected(Math.max(0, selected - 1)); }}><Icon name="trash" size={17} /></button></div>}
     </div>
     <div className="placeholder-fields">{[['x', 'Left', 0, 98], ['y', 'Top', 0, 98], ['width', 'Width', 12, 96], ['height', 'Height', 10, 96], ['rotation', 'Angle', -45, 45]].map(([key, label, min, max]) => <label key={key}><span>{label} <small>{key === 'rotation' ? '°' : '%'}</small></span><input aria-label={'Placeholder ' + label} type="number" min={min} max={max} step="1" value={Math.round(slot[key as keyof PhotoPlaceholder] as number)} onChange={e => editSlot(Math.min(selected, count - 1), { [key]: Number(e.target.value) })} /></label>)}</div>
-    <div className="designer-actions"><button className="text-button" onClick={() => change({ slots: create4RLayout(layout.orientation, count).slots })}><Icon name="refresh" size={15} /> Reset arrangement</button><button className="text-button" disabled={backgroundBusy} onClick={() => backgroundInput.current?.click()}><Icon name="upload" size={15} />{backgroundBusy ? 'Opening…' : 'Upload event background'}</button>{layout.backgroundDataUrl && <button className="text-button danger" onClick={() => change({ backgroundDataUrl: null })}>Remove background</button>}</div>
+    <div className="designer-actions"><button className="text-button" onClick={() => change({ slots: create4RLayout(layout.orientation, count).slots })}><Icon name="refresh" size={15} /> Reset arrangement</button></div>
+    <BackgroundControls />
     <div className="designer-actions"><button className="text-button" onClick={exportLayout}><Icon name="download" size={15} />Save layout file</button>{allowStructure && <button className="text-button" onClick={() => layoutInput.current?.click()}><Icon name="upload" size={15} />Load layout file</button>}</div>
     <input ref={layoutInput} data-testid="layout-upload" className="visually-hidden" tabIndex={-1} type="file" accept="application/json,.json" onChange={e => { void importLayout(e.target.files?.[0]); e.target.value = ''; }} />
-    <input ref={backgroundInput} data-testid="event-background" className="visually-hidden" tabIndex={-1} type="file" accept="image/*" onChange={e => { void loadBackground(e.target.files?.[0]); e.target.value = ''; }} />
-    <p className="control-hint">Add the birthday name and message in Personal touches. Overlapping frames layer in capture order.</p>
+    <p className="control-hint">Add an event name and message in Personal touches. Overlapping frames layer in capture order.</p>
   </div>;
 }

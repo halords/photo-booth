@@ -1,7 +1,9 @@
 'use client';
 
-import type { CustomLayout, FilterId, LayoutId, Shot, TemplateId } from './types';
+import type { CustomLayout, FilterId, LayoutId, PrintBackground, Shot, TemplateId } from './types';
 import { applyFilterToCanvas } from './filters';
+import { drawSeasonalFrame, isSeasonal, SEASONAL_THEMES } from './seasonal';
+import { drawBackground, sanitizeBackground } from './background';
 
 export type PhotoImage = ImageBitmap | HTMLImageElement | HTMLCanvasElement;
 export interface RenderOpts {
@@ -9,6 +11,7 @@ export interface RenderOpts {
   caption: string; filter: FilterId; stripNo: number; ts?: number;
   width?: number; frameColor?: string; showDate?: boolean; edits?: (Shot['edit'])[];
   customLayout?: CustomLayout;
+  stripBackground?: PrintBackground;
 }
 export const LAYOUTS: Record<LayoutId, { shots: number; cols: number; rows: number }> = {
   strip2: { shots: 2, cols: 1, rows: 2 }, strip3: { shots: 3, cols: 1, rows: 3 },
@@ -26,6 +29,8 @@ export const TEMPLATES: Record<TemplateId, { name: string; sub: string; color: s
   modern: { name: 'Studio', sub: 'Bold, clean, modern', color: '#292722', ink: '#f3eee5' },
   vintage: { name: 'Vintage', sub: 'Made for the memories', color: '#f1e2cd', ink: '#785d44' },
   neon: { name: 'After hours', sub: 'A touch of pink', color: '#302438', ink: '#f7a9dc' },
+  halloween: SEASONAL_THEMES.halloween,
+  christmas: SEASONAL_THEMES.christmas,
 };
 function size(img: PhotoImage): [number, number] {
   return img instanceof HTMLImageElement ? [img.naturalWidth, img.naturalHeight] : [img.width, img.height];
@@ -53,38 +58,53 @@ function fittedText(ctx: CanvasRenderingContext2D, value: string, x: number, y: 
 export async function render(o: RenderOpts): Promise<HTMLCanvasElement> {
   if (o.layout === 'custom4r' && o.customLayout) return render4R(o);
   const spec = LAYOUTS[o.layout] || LAYOUTS.strip4, theme = TEMPLATES[o.template] || TEMPLATES['polaroid-white'];
+  const seasonal = isSeasonal(o.template) ? SEASONAL_THEMES[o.template] : null;
+  const background = sanitizeBackground(o.stripBackground), hasArtwork = !!background.dataUrl, showText = background.showText;
   const W = o.width || (spec.cols === 1 ? 1200 : 1800);
   const pad = W * (o.template === 'film' ? 0.085 : 0.065), gap = W * (o.layout === 'collage' ? 0.012 : 0.032);
   const cellW = (W - 2 * pad - gap * (spec.cols - 1)) / spec.cols;
   const cellH = cellW * (o.layout === 'single' ? 1.2 : spec.cols === 1 ? 0.75 : 1);
-  const top = o.template === 'editorial' || o.template === 'modern' ? W * 0.19 : pad;
+  const top = seasonal ? W * .25 : o.template === 'editorial' || o.template === 'modern' ? W * 0.19 : pad;
   const photosH = spec.rows * cellH + (spec.rows - 1) * gap, footer = W * (spec.cols === 1 ? 0.29 : 0.2);
   const H = Math.ceil(top + photosH + footer);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Your browser could not create the photo strip.');
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   const bg = o.frameColor || theme.color; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  await drawBackground(ctx, background, W, H);
   const hex = bg.replace('#', '');
   const luma = hex.length === 6 ? parseInt(hex.slice(0, 2), 16) * 0.299 + parseInt(hex.slice(2, 4), 16) * 0.587 + parseInt(hex.slice(4, 6), 16) * 0.114 : 255;
-  const ink = o.frameColor ? luma < 135 ? '#f8f3eb' : '#292722' : theme.ink;
-  if (o.template === 'vintage') { ctx.strokeStyle = ink; ctx.lineWidth = W * 0.002; ctx.strokeRect(pad * 0.35, pad * 0.35, W - pad * 0.7, H - pad * 0.7); }
-  if (o.template === 'film') {
+  const ink = hasArtwork ? '#292722' : o.frameColor ? luma < 135 ? '#f8f3eb' : '#292722' : theme.ink;
+  if (!hasArtwork && isSeasonal(o.template)) drawSeasonalFrame(ctx, o.template, W, H, top, top + photosH, ink);
+  if (!hasArtwork && o.template === 'vintage') { ctx.strokeStyle = ink; ctx.lineWidth = W * 0.002; ctx.strokeRect(pad * 0.35, pad * 0.35, W - pad * 0.7, H - pad * 0.7); }
+  if (!hasArtwork && o.template === 'film') {
     ctx.fillStyle = '#f8f3eb';
     for (let y = pad; y < H - pad; y += W * 0.09) { ctx.fillRect(W * 0.026, y, W * 0.025, W * 0.042); ctx.fillRect(W * 0.949, y, W * 0.025, W * 0.042); }
   }
+  if (hasArtwork && showText && top > pad) { ctx.fillStyle = '#ffffffcf'; ctx.fillRect(W * .05, W * .025, W * .9, top - W * .06); }
   ctx.fillStyle = ink; ctx.textAlign = 'left';
-  if (top > pad) {
+  if (showText && seasonal) {
+    ctx.textAlign = 'center'; ctx.fillStyle = ink;
+    fittedText(ctx, seasonal.brand, W / 2, top * .32, W * .6, W * .024, 'Arial, sans-serif', '600');
+    fittedText(ctx, o.eventName || seasonal.title, W / 2, top * .68, W * .66, W * .066, 'Georgia, serif', 'bold');
+    ctx.strokeStyle = ink; ctx.globalAlpha = .4; ctx.lineWidth = W * .0015;
+    ctx.beginPath(); ctx.moveTo(W * .38, top * .85); ctx.lineTo(W * .62, top * .85); ctx.stroke(); ctx.globalAlpha = 1;
+  } else if (showText && top > pad) {
     fittedText(ctx, 'POCKET / PHOTO BOOTH', pad, W * 0.066, W - 2 * pad, W * 0.021, 'Arial, sans-serif', '600');
     fittedText(ctx, o.eventName || 'The good times.', pad, W * 0.13, W - 2 * pad, W * 0.043, 'Georgia, serif');
   }
   for (let i = 0; i < spec.shots; i++) {
     const x = pad + (i % spec.cols) * (cellW + gap), y = top + Math.floor(i / spec.cols) * (cellH + gap);
+    if (seasonal && !hasArtwork) { ctx.fillStyle = ink; const edge = W * .003; ctx.fillRect(x - edge, y - edge, cellW + edge * 2, cellH + edge * 2); }
     if (o.photos[i]) { drawPhoto(ctx, o.photos[i], x, y, cellW, cellH, o.edits?.[i]); applyFilterToCanvas(ctx, x, y, cellW, cellH, o.filter); }
     else { ctx.fillStyle = '#ddd6cc'; ctx.fillRect(x, y, cellW, cellH); }
-    if (o.template === 'film') { ctx.fillStyle = ink; ctx.font = '500 ' + W * 0.016 + 'px monospace'; ctx.fillText(String(i + 1).padStart(2, '0') + ' >', x, y + cellH + gap * 0.62); }
+    if (showText && !hasArtwork && o.template === 'film') { ctx.fillStyle = ink; ctx.font = '500 ' + W * 0.016 + 'px monospace'; ctx.fillText(String(i + 1).padStart(2, '0') + ' >', x, y + cellH + gap * 0.62); }
   }
-  ctx.fillStyle = ink; ctx.textAlign = 'center'; const base = top + photosH;
-  fittedText(ctx, o.caption || o.eventName || 'a little moment, forever.', W / 2, base + footer * 0.4, W - pad * 2, W * (spec.cols === 1 ? 0.048 : 0.035), 'Georgia, serif', 'italic');
+  if (!showText) return canvas;
+  const base = top + photosH;
+  if (hasArtwork) { ctx.fillStyle = '#ffffffcf'; ctx.fillRect(W * .05, base + footer * .12, W * .9, footer * .76); }
+  ctx.fillStyle = ink; ctx.textAlign = 'center';
+  fittedText(ctx, o.caption || seasonal?.caption || o.eventName || 'a little moment, forever.', W / 2, base + footer * 0.4, seasonal ? W * .76 : W - pad * 2, W * (spec.cols === 1 ? 0.048 : 0.035), 'Georgia, serif', 'italic');
   ctx.globalAlpha = 0.65;
   const stamp = o.showDate === false ? 'POCKET PHOTO BOOTH' : new Date(o.ts || Date.now()).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).toUpperCase();
   fittedText(ctx, stamp + '  /  NO. ' + String(o.stripNo).padStart(3, '0'), W / 2, base + footer * 0.71, W - pad * 2, W * 0.017, 'Arial, sans-serif');
@@ -93,15 +113,16 @@ export async function render(o: RenderOpts): Promise<HTMLCanvasElement> {
 
 async function render4R(o: RenderOpts) {
   const layout = o.customLayout!, portrait = layout.orientation === 'portrait', theme = TEMPLATES[o.template];
+  const seasonal = isSeasonal(layout.decoration) ? SEASONAL_THEMES[layout.decoration] : null;
+  const background = sanitizeBackground({ ...layout.backgroundOptions, dataUrl: layout.backgroundDataUrl }), showText = background.showText;
   const W = o.width || (portrait ? 1200 : 1800), H = Math.round(W * (portrait ? 1.5 : 2 / 3));
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-  const bg = o.frameColor || (layout.decoration === 'birthday' ? '#f5e9e1' : theme.color);
+  const bg = o.frameColor || seasonal?.color || (layout.decoration === 'birthday' ? '#f5e9e1' : theme.color);
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
   if (layout.backgroundDataUrl) {
-    const background = new Image(); await new Promise<void>((resolve, reject) => { background.onload = () => resolve(); background.onerror = () => reject(new Error('Could not open the event background.')); background.src = layout.backgroundDataUrl!; });
-    drawPhoto(ctx, background, 0, 0, W, H, undefined);
-  } else if (layout.decoration !== 'minimal') {
+    await drawBackground(ctx, background, W, H);
+  } else if (layout.decoration !== 'minimal' && !seasonal) {
     const colors = ['#b7c3b0', '#d39b84', '#d8bc76', '#9ea9c3'];
     for (let i = 0; i < 45; i++) {
       const x = ((i * 37 + 11) % 100) / 100 * W, y = ((i * 29 + 7) % 100) / 100 * H;
@@ -111,26 +132,33 @@ async function render4R(o: RenderOpts) {
     }
   }
   const hex = bg.replace('#', ''), luma = parseInt(hex.slice(0, 2), 16) * .299 + parseInt(hex.slice(2, 4), 16) * .587 + parseInt(hex.slice(4, 6), 16) * .114;
-  const ink = luma < 135 ? '#f8f3eb' : '#40382f'; ctx.textAlign = 'center';
-  if (layout.backgroundDataUrl) { ctx.fillStyle = '#ffffffcf'; ctx.fillRect(W * .05, H * .025, W * .9, H * .115); }
+  const ink = !o.frameColor && seasonal ? seasonal.ink : luma < 135 ? '#f8f3eb' : '#40382f'; ctx.textAlign = 'center';
+  if (isSeasonal(layout.decoration) && !layout.backgroundDataUrl) drawSeasonalFrame(ctx, layout.decoration, W, H, H * .17, H * .85, ink);
+  if (showText && layout.backgroundDataUrl) { ctx.fillStyle = '#ffffffcf'; ctx.fillRect(W * .05, H * .025, W * .9, H * .115); }
   ctx.fillStyle = layout.backgroundDataUrl ? '#40382f' : ink;
-  fittedText(ctx, o.eventName || (layout.decoration === 'birthday' ? 'Happy Birthday!' : 'A day to remember.'), W / 2, H * .09, W * .86, W * .062, 'Georgia, serif');
-  fittedText(ctx, 'A LITTLE MOMENT, FOREVER.', W / 2, H * .125, W * .82, W * .015, 'Arial, sans-serif');
+  if (showText && seasonal) {
+    fittedText(ctx, seasonal.brand, W / 2, H * (portrait ? .05 : .045), W * .64, Math.min(W * .021, H * .022), 'Arial, sans-serif', '600');
+    fittedText(ctx, o.eventName || seasonal.title, W / 2, H * (portrait ? .112 : .118), W * .66, Math.min(W * .061, H * .072), 'Georgia, serif', 'bold');
+  } else if (showText) {
+    fittedText(ctx, o.eventName || (layout.decoration === 'birthday' ? 'Happy Birthday!' : 'A day to remember.'), W / 2, H * .09, W * .86, W * .062, 'Georgia, serif');
+    fittedText(ctx, 'A LITTLE MOMENT, FOREVER.', W / 2, H * .125, W * .82, W * .015, 'Arial, sans-serif');
+  }
   for (let i = 0; i < layout.slots.length; i++) {
     const s = layout.slots[i], w = W * s.width / 100, h = H * s.height / 100;
     const photo = document.createElement('canvas'); photo.width = Math.max(1, Math.round(w)); photo.height = Math.max(1, Math.round(h));
     const pctx = photo.getContext('2d')!;
     if (o.photos[i]) { drawPhoto(pctx, o.photos[i], 0, 0, w, h, o.edits?.[i]); applyFilterToCanvas(pctx, 0, 0, w, h, o.filter); }
-    else { pctx.fillStyle = '#d9dfd0'; pctx.fillRect(0, 0, w, h); pctx.textAlign = 'center'; pctx.fillStyle = '#65775b'; pctx.font = Math.min(w, h) * .16 + 'px Arial'; pctx.fillText('PHOTO ' + (i + 1), w / 2, h / 2); }
+    else { pctx.fillStyle = '#d9dfd0'; pctx.fillRect(0, 0, w, h); if (showText) { pctx.textAlign = 'center'; pctx.fillStyle = '#65775b'; pctx.font = Math.min(w, h) * .16 + 'px Arial'; pctx.fillText('PHOTO ' + (i + 1), w / 2, h / 2); } }
     ctx.save(); ctx.translate(W * s.x / 100 + w / 2, H * s.y / 100 + h / 2); ctx.rotate(s.rotation * Math.PI / 180);
     ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#00000018'; ctx.shadowBlur = W * .012; ctx.shadowOffsetY = W * .004;
     const border = W * .007; ctx.fillRect(-w / 2 - border, -h / 2 - border, w + border * 2, h + border * 2); ctx.shadowColor = 'transparent';
     ctx.drawImage(photo, -w / 2, -h / 2, w, h); ctx.restore();
   }
+  if (!showText) return canvas;
   ctx.textAlign = 'center';
   if (layout.backgroundDataUrl) { ctx.fillStyle = '#ffffffcf'; ctx.fillRect(W * .05, H * .89, W * .9, H * .09); }
   ctx.fillStyle = layout.backgroundDataUrl ? '#40382f' : ink;
-  fittedText(ctx, o.caption || 'Thank you for celebrating with us.', W / 2, H * .925, W * .86, W * .026, 'Georgia, serif', 'italic');
+  fittedText(ctx, o.caption || seasonal?.caption || 'Thank you for celebrating with us.', W / 2, H * .925, W * (seasonal ? .76 : .86), W * .026, 'Georgia, serif', 'italic');
   const date = o.showDate === false ? 'POCKET PHOTO BOOTH' : new Date(o.ts || Date.now()).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).toUpperCase();
   fittedText(ctx, date + ' / NO. ' + String(o.stripNo).padStart(3, '0'), W / 2, H * .96, W * .86, W * .012, 'Arial, sans-serif');
   return canvas;
@@ -152,7 +180,7 @@ export async function renderSwatch(template: TemplateId) {
   const ctx = photo.getContext('2d')!; ctx.fillStyle = '#a7b1a0'; ctx.fillRect(0, 0, 120, 90);
   ctx.fillStyle = '#e0c6af'; ctx.beginPath(); ctx.arc(60, 34, 17, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#777562'; ctx.beginPath(); ctx.ellipse(60, 90, 37, 37, 0, 0, Math.PI * 2); ctx.fill();
-  const cv = await render({ photos: [photo, photo, photo], layout: 'strip3', template, eventName: 'Good times', caption: '', filter: 'natural', stripNo: 1, width: 140, ts: 1770000000000 });
+  const cv = await render({ photos: [photo, photo, photo], layout: 'strip3', template, eventName: isSeasonal(template) ? '' : 'Good times', caption: '', filter: 'natural', stripNo: 1, width: 140, ts: 1770000000000 });
   const url = cv.toDataURL('image/jpeg', 0.8); swatches.set(template, url); return url;
 }
 export const Compose = { loadPhoto, render, shotsFor, renderSwatch, LAYOUTS, TEMPLATES };

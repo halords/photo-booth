@@ -6,6 +6,7 @@ import ShotImage from './ShotImage';
 import Icon from './Icon';
 import Steps from './Steps';
 import CustomLayoutEditor from './CustomLayoutEditor';
+import BackgroundControls from './BackgroundControls';
 
 export default function ReviewView() {
   const { settings, shots, busy, go, getStripCanvas, finalize, editShot, moveShot, importPhotos } = useBooth();
@@ -25,7 +26,7 @@ export default function ReviewView() {
   return <section className="page workflow-page"><Steps current={2} /><div className="page-intro"><div><span className="eyebrow">THE FINISHING TOUCHES</span><h1>A little edit. <em>A lot of personality.</em></h1><p>Your moments are captured. Now give them a look you love.</p></div><span className="pill subtle"><Icon name="check" size={14} /> All photos ready</span></div>
     <div className="workspace-grid review-workspace"><div className="editor-panel panel"><div className="tab-nav" role="tablist" aria-label="Photo editing">{[['frame', 'Frame'], ['filter', 'Filter'], ['photos', 'Photos'], ['details', 'Details']].map(([id, label]) => <button key={id} role="tab" id={'edit-tab-' + id} aria-controls={'edit-panel-' + id} aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
       <div className="settings-content" role="tabpanel" id={'edit-panel-' + tab} aria-labelledby={'edit-tab-' + tab}>
-        {tab === 'frame' && <>{settings.layout === 'custom4r' ? <CustomLayoutEditor allowStructure={false} /> : <div className="control-section"><h3>Frame your favorite moments.</h3><p className="control-hint">Try a few. You'll know when it feels right.</p><TemplatePicker /></div>}<CaptionControls /></>}
+        {tab === 'frame' && <>{settings.layout === 'custom4r' ? <CustomLayoutEditor allowStructure={false} /> : <><div className="control-section"><h3>Frame your favorite moments.</h3><p className="control-hint">Try a few. You'll know when it feels right.</p><TemplatePicker /></div><BackgroundControls /></>}<CaptionControls /></>}
         {tab === 'filter' && <div className="control-section"><h3>Find your kind of light.</h3><p className="control-hint">One look across your strip. Originals stay untouched.</p><FilterPicker /></div>}
         {tab === 'details' && <div className="control-section"><h3>A few words to remember it by.</h3><CaptionControls /></div>}
         {tab === 'photos' && <div className="control-section"><h3>Every frame, just right.</h3><p className="control-hint">Choose a photo to crop or rotate. Use the arrows to change its place.</p><div className="edit-photos">{shots.map((shot, i) => <button key={i} className={i === selected ? 'selected' : ''} aria-pressed={i === selected} aria-label={'Edit photo ' + (i + 1)} onClick={() => setSelected(i)}>{shot && <ShotImage file={shot.file} />}<span>{i + 1}</span></button>)}</div>

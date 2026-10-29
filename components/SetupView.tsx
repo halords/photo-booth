@@ -5,11 +5,11 @@ import { LAYOUTS } from '@/lib/compose';
 import type { LayoutId } from '@/lib/types';
 import { Segmented } from './pickers';
 import { TemplatePicker, FilterPicker, CaptionControls } from './StyleControls';
-import PhotoStrip from './PhotoStrip';
 import Icon from './Icon';
 import Steps from './Steps';
 import CustomLayoutEditor from './CustomLayoutEditor';
-import EventLayoutPreview from './EventLayoutPreview';
+import SetupPrintPreview from './SetupPrintPreview';
+import BackgroundControls from './BackgroundControls';
 
 export const LAYOUT_OPTIONS: { id: LayoutId; name: string; detail: string }[] = [
   { id: 'strip4', name: 'Classic strip', detail: '4 photos' }, { id: 'strip3', name: 'The trio', detail: '3 photos' },
@@ -34,10 +34,10 @@ export default function SetupView() {
           <div className="toggle-grid">{[['mirrorMode', 'Mirror selfies'], ['soundEnabled', 'Shutter sounds'], ['flashEnabled', 'Screen flash'], ['showGrid', 'Framing guide']].map(([key, label]) => <label className="toggle-row" key={key}><span>{label}</span><input type="checkbox" checked={Boolean(settings[key as keyof typeof settings])} onChange={e => updateSettings({ [key]: e.target.checked })} /><span className="switch" aria-hidden="true" /></label>)}</div>
         </div>}
       </>}
-      {tab === 'style' && <><div className="control-section"><h3>A frame for your memories</h3><p className="control-hint">Eight looks. One perfect fit.</p><TemplatePicker /></div><div className="control-section"><h3>Set the mood</h3><p className="control-hint">Your photos stay original. The look is yours to change.</p><FilterPicker /></div></>}
+      {tab === 'style' && <><div className="control-section"><h3>A frame for your memories</h3><p className="control-hint">Everyday favorites, PGLU Halloween Special, and Christmas cheer.</p><TemplatePicker /></div><BackgroundControls /><div className="control-section"><h3>Set the mood</h3><p className="control-hint">Your photos stay original. The look is yours to change.</p><FilterPicker /></div></>}
       {tab === 'details' && <><div className="control-section"><h3>Make it a little more personal</h3><p className="control-hint">A name, a note, a color. The details make it yours.</p><CaptionControls /></div><div className="info-note"><Icon name="shield" /><p>Your photos are processed locally. Your finished strips are saved in this browser's gallery.</p></div></>}
       </div>
-    </div><aside className="setup-preview panel"><div className="panel-heading"><span className="eyebrow">YOUR KEEPSAKE</span><span className="pill subtle">Preview</span></div><div className="preview-stage">{settings.layout === 'custom4r' ? <EventLayoutPreview /> : <PhotoStrip layout={settings.layout} template={settings.template} caption={settings.caption || settings.eventName} />}</div><div className="preview-summary"><strong>{LAYOUT_OPTIONS.find(l => l.id === settings.layout)?.name}</strong><span>{settings.layout === 'custom4r' ? settings.customLayout.slots.length : LAYOUTS[settings.layout].shots} photos · {settings.mode === 'upload' ? 'Your own photos' : settings.countdown + 's timer'}{settings.layout === 'custom4r' && ' · 4R / 300 DPI'}</span></div><button className="btn btn-primary full-width" disabled={busy} onClick={startSession}><Icon name={settings.mode === 'upload' ? 'upload' : 'camera'} size={19} />{settings.mode === 'upload' ? 'Choose my photos' : 'Enter the booth'}<Icon name="arrow" size={18} /></button><button className="text-button demo-button" disabled={busy} onClick={() => void useDemo()}>Just exploring? Try sample photos</button></aside></div>
+    </div><aside className="setup-preview panel"><div className="panel-heading"><span className="eyebrow">YOUR KEEPSAKE</span><span className="pill subtle">Preview</span></div><div className="preview-stage"><SetupPrintPreview /></div><div className="preview-summary"><strong>{LAYOUT_OPTIONS.find(l => l.id === settings.layout)?.name}</strong><span>{settings.layout === 'custom4r' ? settings.customLayout.slots.length : LAYOUTS[settings.layout].shots} photos · {settings.mode === 'upload' ? 'Your own photos' : settings.countdown + 's timer'}{settings.layout === 'custom4r' && ' · 4R / 300 DPI'}</span></div><button className="btn btn-primary full-width" disabled={busy} onClick={startSession}><Icon name={settings.mode === 'upload' ? 'upload' : 'camera'} size={19} />{settings.mode === 'upload' ? 'Choose my photos' : 'Enter the booth'}<Icon name="arrow" size={18} /></button><button className="text-button demo-button" disabled={busy} onClick={() => void useDemo()}>Just exploring? Try sample photos</button></aside></div>
     <button className="text-button back-link" onClick={() => go('home')}><Icon name="back" size={16} /> Back to your studio</button>
   </section>;
 }

@@ -2,6 +2,7 @@
 import { useBooth } from '@/lib/booth';
 import { TEMPLATES } from '@/lib/compose';
 import type { FilterId, TemplateId } from '@/lib/types';
+import { isSeasonal } from '@/lib/seasonal';
 import TemplateSwatch from './TemplateSwatch';
 
 export const FILTER_OPTIONS: { id: FilterId; name: string; css: string }[] = [
@@ -15,7 +16,9 @@ export const FILTER_OPTIONS: { id: FilterId; name: string; css: string }[] = [
 export function TemplatePicker() {
   const { settings, updateSettings } = useBooth();
   return <div className="template-picker">{(Object.entries(TEMPLATES) as [TemplateId, typeof TEMPLATES[TemplateId]][]).map(([id, t]) =>
-    <button key={id} className={'template-choice ' + (settings.template === id ? 'selected' : '')} aria-pressed={settings.template === id} onClick={() => updateSettings({ template: id, frameColor: '' })}>
+    <button key={id} title={t.sub} className={'template-choice ' + (settings.template === id ? 'selected' : '')} aria-pressed={settings.template === id} onClick={() => updateSettings({ template: id, frameColor: '',
+      customLayout: { ...settings.customLayout, decoration: isSeasonal(id) ? id : isSeasonal(settings.customLayout.decoration) ? 'minimal' : settings.customLayout.decoration },
+    })}>
       <TemplateSwatch template={id} /><span>{t.name}</span>
     </button>)}</div>;
 }

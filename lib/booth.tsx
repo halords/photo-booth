@@ -8,6 +8,8 @@ import { Compose } from './compose';
 import { Share, type ImageFormat } from './share';
 import { allStrips, deleteStrip, putStrip } from './store';
 import { DEFAULT_4R, sanitize4R } from './layouts';
+import { isSeasonal, SEASONAL_THEMES } from './seasonal';
+import { DEFAULT_BACKGROUND, sanitizeBackground } from './background';
 
 interface ProStatus { running: boolean; count: number | null; status: string; cameraReady: boolean; error: string | null; flash: boolean }
 interface Result { dataUrl: string; name: string; id: string; saved: boolean; width: number; height: number; editable: boolean; printOrientation?: 'portrait' | 'landscape' }
@@ -31,6 +33,7 @@ const Context = createContext<BoothValue | null>(null);
 export function useBooth() { const value = useContext(Context); if (!value) throw new Error('Missing BoothProvider'); return value; }
 const defaults: Settings = {
   customLayout: DEFAULT_4R,
+  stripBackground: DEFAULT_BACKGROUND,
   eventName: '', layout: 'strip4', mode: 'pro', camera: 'user', cameraSource: 'webcam', countdown: 3,
   filter: 'natural', template: 'polaroid-white', caption: '', stripSize: 'standard', printDPI: 300,
   soundEnabled: true, flashEnabled: true, countdownSound: true, mirrorMode: true, quality: 'high',
@@ -66,6 +69,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
   const settingsRef = useRef(settings), shotsRef = useRef(shots), cameraRef = useRef(selectedCamera);
   const sequence = useRef(0), session = useRef(0), running = useRef(false), busyRef = useRef(false);
   const cameraRequest = useRef(0);
+  const backgroundStorageWarning = useRef(false);
   const nativePending = useRef(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null), flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultCanvas = useRef<HTMLCanvasElement | null>(null), audio = useRef<AudioContext | null>(null);
@@ -93,9 +97,13 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem('booth.settings', JSON.stringify(next)); }
     catch {
       // Large artwork stays available for this session even if preferences quota is small.
-      try { localStorage.setItem('booth.settings', JSON.stringify({ ...next, customLayout: { ...next.customLayout, backgroundDataUrl: null } })); } catch {}
+      try { localStorage.setItem('booth.settings', JSON.stringify({ ...next, stripBackground: { ...next.stripBackground, dataUrl: null }, customLayout: { ...next.customLayout, backgroundDataUrl: null } })); } catch {}
+      if (!backgroundStorageWarning.current && (next.stripBackground.dataUrl || next.customLayout.backgroundDataUrl)) {
+        backgroundStorageWarning.current = true;
+        notify('Background artwork is available for this session only because device storage is full.');
+      }
     }
-  }, []);
+  }, [notify]);
   const refreshGallery = useCallback(async () => {
     try { setGallery(await allStrips()); } catch { notify('Device storage is unavailable. You can still download your strips.'); }
     finally { setGalleryLoading(false); }
@@ -118,6 +126,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
       if (!Compose.TEMPLATES[next.template as keyof typeof Compose.TEMPLATES]) next.template = defaults.template;
       if (!['native', 'pro', 'upload'].includes(next.mode)) next.mode = 'pro';
       next.customLayout = sanitize4R(saved.customLayout);
+      next.stripBackground = sanitizeBackground(saved.stripBackground);
       for (const key of ['eventName', 'caption', 'frameColor'] as const) if (typeof next[key] !== 'string') next[key] = defaults[key];
       next.eventName = next.eventName.slice(0, 48); next.caption = next.caption.slice(0, 60);
       if (!/^#[0-9a-f]{6}$/i.test(next.frameColor)) next.frameColor = '';
@@ -272,7 +281,7 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     if (current.length !== requiredPhotos(s) || current.some(shot => !shot)) throw new Error('Add all photos before making your strip.');
     return Compose.render({ photos: current.map(shot => shot!.img), edits: current.map(shot => shot!.edit), layout: s.layout,
       template: s.template, eventName: s.eventName, caption: s.caption, filter: s.filter, stripNo, ts: sessionTime.current,
-      frameColor: s.frameColor, showDate: s.showDate, customLayout: s.customLayout, width: preview ? 480 : undefined });
+      frameColor: s.frameColor, showDate: s.showDate, customLayout: s.customLayout, stripBackground: s.stripBackground, width: preview ? 480 : undefined });
   }, [stripNo]);
   const finalize = useCallback(async () => {
     if (busyRef.current) return; busyRef.current = true; setBusy(true);
@@ -280,15 +289,17 @@ export function BoothProvider({ children }: { children: React.ReactNode }) {
     try {
       const canvas = await getStripCanvas(), s = settingsRef.current;
       if (request !== session.current) return;
+      const occasion = s.layout === 'custom4r' ? s.customLayout.decoration : s.template;
+      const eventName = s.eventName || (isSeasonal(occasion) ? occasion === 'halloween' ? SEASONAL_THEMES.halloween.sub : SEASONAL_THEMES.christmas.title : 'Photo booth session');
       const dataUrl = canvas.toDataURL('image/jpeg', 0.94), thumb = document.createElement('canvas');
       thumb.width = 240; thumb.height = Math.round(canvas.height * 240 / canvas.width); thumb.getContext('2d')!.drawImage(canvas, 0, 0, thumb.width, thumb.height);
       const record: StripRecord = { id: crypto.randomUUID(), ts: sessionTime.current, dataUrl, thumbnailUrl: thumb.toDataURL('image/jpeg', 0.8),
-        eventName: s.eventName || 'Photo booth session', layout: s.layout, template: s.template, photos: [], caption: s.caption, filter: s.filter, width: canvas.width, height: canvas.height, favorite: false, printOrientation: s.layout === 'custom4r' ? s.customLayout.orientation : undefined };
+        eventName, layout: s.layout, template: s.template, photos: [], caption: s.caption, filter: s.filter, width: canvas.width, height: canvas.height, favorite: false, printOrientation: s.layout === 'custom4r' ? s.customLayout.orientation : undefined };
       let saved = true;
       try { await putStrip(record); } catch { saved = false; notify('Device storage is full or unavailable. Download this strip to keep it.'); }
       void refreshGallery(); if (request !== session.current) return;
       resultCanvas.current = canvas;
-      setResult({ dataUrl, name: slug(s.eventName) + '-strip-' + String(stripNo).padStart(3, '0') + '.jpg', id: record.id, saved, width: canvas.width, height: canvas.height, editable: true, printOrientation: record.printOrientation });
+      setResult({ dataUrl, name: slug(s.eventName || (isSeasonal(occasion) ? eventName : '')) + '-strip-' + String(stripNo).padStart(3, '0') + '.jpg', id: record.id, saved, width: canvas.width, height: canvas.height, editable: true, printOrientation: record.printOrientation });
       setStripNo(stripNo + 1); try { localStorage.setItem('booth.stripNo', String(stripNo + 1)); } catch {}
       go('result'); void refreshGallery();
     } catch (error) { notify(error instanceof Error ? error.message : 'Could not create your strip.'); }

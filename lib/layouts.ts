@@ -1,4 +1,5 @@
 import type { CustomLayout, PhotoPlaceholder, StripOrientation } from './types';
+import { backgroundOptions } from './background';
 
 export function create4RLayout(orientation: StripOrientation = 'portrait', count = 3, decoration: CustomLayout['decoration'] = 'birthday'): CustomLayout {
   const cols = count === 1 ? 1 : orientation === 'landscape' ? Math.min(count, 3) : count > 3 ? 2 : 1;
@@ -30,7 +31,8 @@ export function sanitize4R(value: unknown): CustomLayout {
     id: 'slot-' + (i + 1), x: s.x, y: s.y, width: s.width, height: s.height, rotation: s.rotation,
   }, orientation)) : [];
   return { orientation, slots: slots.length ? slots : create4RLayout(orientation).slots,
-    decoration: candidate.decoration === 'minimal' || candidate.decoration === 'celebration' ? candidate.decoration : 'birthday',
+    decoration: candidate.decoration === 'minimal' || candidate.decoration === 'celebration' || candidate.decoration === 'halloween' || candidate.decoration === 'christmas' ? candidate.decoration : 'birthday',
     backgroundDataUrl: typeof candidate.backgroundDataUrl === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(candidate.backgroundDataUrl) ? candidate.backgroundDataUrl : null,
+    backgroundOptions: backgroundOptions(candidate.backgroundOptions),
   };
 }

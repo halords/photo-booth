@@ -1,6 +1,6 @@
 export type ViewName = 'home' | 'setup' | 'capture' | 'review' | 'result' | 'gallery' | 'settings';
 export type LayoutId = 'strip2' | 'strip3' | 'strip4' | 'strip6' | 'grid2x2' | 'grid3x3' | 'single' | 'collage' | 'custom4r';
-export type TemplateId = 'editorial' | 'film' | 'kraft' | 'polaroid' | 'polaroid-white' | 'modern' | 'vintage' | 'neon';
+export type TemplateId = 'editorial' | 'film' | 'kraft' | 'polaroid' | 'polaroid-white' | 'modern' | 'vintage' | 'neon' | 'halloween' | 'christmas';
 export type FilterId = 'natural' | 'noir' | 'sepia' | 'warm' | 'vivid' | 'cool' | 'fade' | 'dramatic' | 'vintage-film' | 'crossprocess' | 'teal-orange';
 export type CaptureMode = 'native' | 'pro' | 'dslr' | 'video' | 'upload';
 export type Lens = 'user' | 'environment';
@@ -13,6 +13,7 @@ export type OverlayType = 'hat' | 'glasses' | 'mustache' | 'frame' | 'text' | 'c
 
 export interface Settings {
   customLayout: CustomLayout;
+  stripBackground: PrintBackground;
   eventName: string;
   layout: LayoutId;
   mode: CaptureMode;
@@ -48,9 +49,20 @@ export interface PhotoPlaceholder {
 }
 export interface CustomLayout {
   orientation: StripOrientation;
-  decoration: 'minimal' | 'birthday' | 'celebration';
+  decoration: 'minimal' | 'birthday' | 'celebration' | 'halloween' | 'christmas';
   slots: PhotoPlaceholder[];
   backgroundDataUrl: string | null;
+  backgroundOptions?: BackgroundOptions;
+}
+
+export interface BackgroundOptions {
+  fit: 'cover' | 'contain' | 'stretch';
+  x: number;
+  y: number;
+  showText: boolean;
+}
+export interface PrintBackground extends BackgroundOptions {
+  dataUrl: string | null;
 }
 
 export interface Shot {
